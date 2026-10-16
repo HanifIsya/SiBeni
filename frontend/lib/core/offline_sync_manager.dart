@@ -14,7 +14,7 @@ class OfflineSyncManager {
   final ValueNotifier<bool> isSyncing = ValueNotifier<bool>(false);
 
   static const String _queueKey = 'sibeni_offline_queue';
-  String backendApiUrl = 'http://localhost:3000/api/reports';
+  String backendApiUrl = 'https://sibeni-backend.onrender.com/api/reports';
 
   Future<void> initialize() async {
     await _updateQueueCount();

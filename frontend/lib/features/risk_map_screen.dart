@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../../core/theme.dart';
 import '../../core/user_session.dart';
 import '../../core/api_service.dart';
@@ -19,9 +21,24 @@ class RiskMapScreen extends StatefulWidget {
 }
 
 class _RiskMapScreenState extends State<RiskMapScreen> {
+  final MapController _mapController = MapController();
   List<Map<String, dynamic>> _warnings = [];
   List<Map<String, dynamic>> _zones = [];
   bool _isLoading = true;
+
+  // Real geographic center of mining concession
+  final LatLng _workerPos = const LatLng(-2.1458291, 115.3489124);
+
+  // 7 Defined Geographic Points in OpenStreetMap
+  final Map<String, LatLng> _zoneCoordinates = {
+    'ZONE_PIT': const LatLng(-2.1458291, 115.3489124),
+    'ZONE_HAUL_ROAD': const LatLng(-2.1492000, 115.3524000),
+    'ZONE_STOCKPILE': const LatLng(-2.1528000, 115.3561000),
+    'ZONE_WORKSHOP': const LatLng(-2.1435000, 115.3468000),
+    'ZONE_PROCESSING': const LatLng(-2.1550000, 115.3585000),
+    'ZONE_WAREHOUSE': const LatLng(-2.1412000, 115.3435000),
+    'ZONE_SUPPORT': const LatLng(-2.1425000, 115.3452000),
+  };
 
   @override
   void initState() {
@@ -58,14 +75,83 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   String _getRiskLabel(String level) {
     switch (level.toLowerCase()) {
       case 'critical':
-        return 'Sangat Tinggi (Awas)';
+        return 'SANGAT TINGGI (AWAS)';
       case 'high':
-        return 'Tinggi (Siaga)';
+        return 'TINGGI (SIAGA)';
       case 'medium':
-        return 'Sedang (Waspada)';
+        return 'SEDANG (WASPADA)';
       default:
-        return 'Rendah (Aman)';
+        return 'RENDAH (AMAN)';
     }
+  }
+
+  void _showZoneDetail(Map<String, dynamic> zone) {
+    final riskLevel = zone['current_risk_level'] ?? 'low';
+    final color = _getRiskColor(riskLevel);
+    final hazards = List<String>.from(zone['active_hazards'] ?? []);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      zone['name'] ?? 'Zona Tambang',
+                      style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(20), border: Border.all(color: color)),
+                    child: Text(_getRiskLabel(riskLevel), style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(zone['description'] ?? '', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.onSurfaceSecondary)),
+              const SizedBox(height: 12),
+              Text('Potensi Bahaya Teridentifikasi:', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              if (hazards.isEmpty)
+                Text('• Tidak ada ancaman geoteknik atau cuaca aktif di zona ini.', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.brandSafetyGreen))
+              else
+                ...hazards.map((h) => Text('• $h', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.riskHigh, fontWeight: FontWeight.w600))),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: AppTheme.surfaceMuted, borderRadius: BorderRadius.circular(8)),
+                child: Row(
+                  children: [
+                    const Icon(Icons.flag, color: AppTheme.brandSafetyGreen, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Titik Kumpul Evakuasi Terdekat:', style: GoogleFonts.plusJakartaSans(fontSize: 10, color: AppTheme.onSurfaceSecondary)),
+                          Text(zone['evacuation_assembly_point'] ?? 'Assembly Point A', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandSafetyGreen)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -81,7 +167,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Worker Zone Pill & Active Shift
+            // 1. Worker Identity & Shift Badge
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
@@ -99,9 +185,9 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Zona & Peran Anda', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary)),
+                          Text('Lokasi Operasional Anda', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary)),
                           Text(
-                            user != null ? '${user.workZone.split(' (')[0]} • ${user.roleDisplayName}' : 'Pit Utama',
+                            user != null ? user.workZone.split(' (')[0] : 'Pit Utama',
                             style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary),
                           ),
                         ],
@@ -125,7 +211,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
             ),
             const SizedBox(height: 14),
 
-            // 2. Early Warning Banner (BMKG & BNPB Live from Database)
+            // 2. Early Warning Alert Card (Live Supabase & BMKG)
             if (_isLoading && _warnings.isEmpty)
               const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
             else if (_warnings.isNotEmpty)
@@ -195,140 +281,189 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                     ),
                   ),
                 );
-              })
-            else
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppTheme.riskLowBg,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.riskLow),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle, color: AppTheme.riskLow),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Tidak ada peringatan dini darurat aktif. Kondisi operasional normal.',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandSafetyGreen),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              }),
 
-            const SizedBox(height: 10),
-
-            // 3. Mining Risk Map Card
+            // 3. Real Interactive OpenStreetMap Card
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Peta Risiko 7 Zona Tambang', style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
-                Text('Live Database', style: GoogleFonts.jetBrainsMono(fontSize: 11, color: AppTheme.brandSafetyGreen, fontWeight: FontWeight.bold)),
+                Text('Peta Risiko Interaktif (OpenStreetMap)', style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: AppTheme.surfaceMuted, borderRadius: BorderRadius.circular(6)),
+                  child: Text('OSM Live Tiles', style: GoogleFonts.jetBrainsMono(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.brandPrimary)),
+                ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
 
             Container(
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: AppTheme.borderSubtle),
               ),
               child: Column(
                 children: [
-                  // Vector Mining Map Layout with Dynamic Zone Statuses
-                  Container(
-                    height: 230,
-                    width: double.infinity,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE2E8F0),
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: CustomPaint(painter: MapGridPainter()),
-                        ),
-                        // Dynamic Zone 1: Pit
-                        Positioned(
-                          top: 15,
-                          left: 15,
-                          child: _buildMapZoneNode(
-                            _zones.isNotEmpty ? _zones[0]['name'].toString().split(' (')[0] : 'Pit Utama',
-                            _zones.isNotEmpty ? _getRiskColor(_zones[0]['current_risk_level'] ?? 'high') : AppTheme.riskHigh,
-                            _zones.isNotEmpty ? _getRiskLabel(_zones[0]['current_risk_level'] ?? 'high') : 'Tinggi',
-                          ),
-                        ),
-                        // Dynamic Zone 2: Haul Road
-                        Positioned(
-                          top: 55,
-                          right: 20,
-                          child: _buildMapZoneNode(
-                            _zones.length > 1 ? _zones[1]['name'].toString().split(' (')[0] : 'Haul Road',
-                            _zones.length > 1 ? _getRiskColor(_zones[1]['current_risk_level'] ?? 'medium') : AppTheme.riskMedium,
-                            _zones.length > 1 ? _getRiskLabel(_zones[1]['current_risk_level'] ?? 'medium') : 'Sedang',
-                          ),
-                        ),
-                        // Dynamic Zone 3: Workshop
-                        Positioned(
-                          bottom: 25,
-                          left: 20,
-                          child: _buildMapZoneNode(
-                            _zones.length > 3 ? _zones[3]['name'].toString().split(' (')[0] : 'Workshop',
-                            _zones.length > 3 ? _getRiskColor(_zones[3]['current_risk_level'] ?? 'medium') : AppTheme.riskMedium,
-                            _zones.length > 3 ? _getRiskLabel(_zones[3]['current_risk_level'] ?? 'medium') : 'Sedang',
-                          ),
-                        ),
-                        // Dynamic Zone 4: Stockpile
-                        Positioned(
-                          bottom: 35,
-                          right: 25,
-                          child: _buildMapZoneNode(
-                            _zones.length > 2 ? _zones[2]['name'].toString().split(' (')[0] : 'Stockpile',
-                            _zones.length > 2 ? _getRiskColor(_zones[2]['current_risk_level'] ?? 'low') : AppTheme.riskLow,
-                            _zones.length > 2 ? _getRiskLabel(_zones[2]['current_risk_level'] ?? 'low') : 'Rendah',
-                          ),
-                        ),
-                        // Worker Position Badge
-                        Positioned(
-                          top: 45,
-                          left: 80,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppTheme.brandPrimary,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                    child: SizedBox(
+                      height: 280,
+                      width: double.infinity,
+                      child: Stack(
+                        children: [
+                          FlutterMap(
+                            mapController: _mapController,
+                            options: MapOptions(
+                              initialCenter: _workerPos,
+                              initialZoom: 14.5,
+                              minZoom: 12.0,
+                              maxZoom: 18.0,
                             ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TileLayer(
+                                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.consnet.sibeni',
+                              ),
+                              // Haul Road Arterial Polyline connecting pit to facilities
+                              PolylineLayer(
+                                polylines: [
+                                  Polyline(
+                                    points: [
+                                      const LatLng(-2.1412, 115.3435), // Warehouse
+                                      const LatLng(-2.1435, 115.3468), // Workshop
+                                      const LatLng(-2.1458, 115.3489), // Pit Utama
+                                      const LatLng(-2.1492, 115.3524), // Haul Road KM 4
+                                      const LatLng(-2.1528, 115.3561), // Stockpile
+                                      const LatLng(-2.1550, 115.3585), // Crusher Plant
+                                    ],
+                                    color: const Color(0xFFEAB308),
+                                    strokeWidth: 4.0,
+                                  ),
+                                  // Green evacuation route
+                                  Polyline(
+                                    points: [
+                                      _workerPos,
+                                      const LatLng(-2.1448, 115.3475),
+                                      const LatLng(-2.1435, 115.3468),
+                                    ],
+                                    color: AppTheme.brandSafetyGreen,
+                                    strokeWidth: 3.5,
+                                  ),
+                                ],
+                              ),
+                              // Mining Zones Markers
+                              MarkerLayer(
+                                markers: [
+                                  // 7 Zones Markers
+                                  ..._zones.map((zone) {
+                                    final code = zone['code'] ?? 'ZONE_PIT';
+                                    final pos = _zoneCoordinates[code] ?? _workerPos;
+                                    final riskColor = _getRiskColor(zone['current_risk_level'] ?? 'low');
+                                    final shortName = zone['name'].toString().split(' (')[0];
+
+                                    return Marker(
+                                      point: pos,
+                                      width: 90,
+                                      height: 50,
+                                      child: GestureDetector(
+                                        onTap: () => _showZoneDetail(zone),
+                                        child: Column(
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.white,
+                                                borderRadius: BorderRadius.circular(4),
+                                                border: Border.all(color: riskColor, width: 2),
+                                                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                                              ),
+                                              child: Text(
+                                                shortName,
+                                                style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.bold),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            Icon(Icons.location_on, color: riskColor, size: 22),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }),
+
+                                  // Worker Live Position Marker
+                                  Marker(
+                                    point: _workerPos,
+                                    width: 36,
+                                    height: 36,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.brandSecondary,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: Colors.white, width: 3),
+                                        boxShadow: const [BoxShadow(color: Color(0x6600B4D8), blurRadius: 8, spreadRadius: 2)],
+                                      ),
+                                      child: const Icon(Icons.person, color: Colors.white, size: 18),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+
+                          // Map Controls (Zoom In/Out, Re-center)
+                          Positioned(
+                            top: 10,
+                            right: 10,
+                            child: Column(
                               children: [
-                                const Icon(Icons.person_pin_circle, color: Colors.cyanAccent, size: 16),
-                                const SizedBox(width: 4),
-                                Text(
-                                  user != null ? user.fullName : 'Posisi Anda',
-                                  style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                FloatingActionButton.small(
+                                  heroTag: 'btn_zoom_in',
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: AppTheme.brandPrimary,
+                                  onPressed: () {
+                                    _mapController.move(_mapController.camera.center, _mapController.camera.zoom + 1);
+                                  },
+                                  child: const Icon(Icons.add),
+                                ),
+                                const SizedBox(height: 6),
+                                FloatingActionButton.small(
+                                  heroTag: 'btn_zoom_out',
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: AppTheme.brandPrimary,
+                                  onPressed: () {
+                                    _mapController.move(_mapController.camera.center, _mapController.camera.zoom - 1);
+                                  },
+                                  child: const Icon(Icons.remove),
+                                ),
+                                const SizedBox(height: 6),
+                                FloatingActionButton.small(
+                                  heroTag: 'btn_recenter',
+                                  backgroundColor: AppTheme.brandPrimary,
+                                  foregroundColor: Colors.white,
+                                  onPressed: () {
+                                    _mapController.move(_workerPos, 15.0);
+                                  },
+                                  child: const Icon(Icons.my_location),
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
 
                   // 4-Tier Risk Taxonomy Legend
                   Padding(
-                    padding: const EdgeInsets.all(12.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
                         _buildLegendItem('Rendah', AppTheme.riskLow),
                         _buildLegendItem('Sedang', AppTheme.riskMedium),
                         _buildLegendItem('Tinggi', AppTheme.riskHigh),
-                        _buildLegendItem('Sangat Tinggi', AppTheme.riskCritical),
+                        _buildLegendItem('Kritis (SOS)', AppTheme.riskCritical),
                       ],
                     ),
                   ),
@@ -337,7 +472,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
             ),
             const SizedBox(height: 20),
 
-            // 4. Quick Action Cards
+            // 4. Quick Action Cards (Lapor Cepat & Tombol SOS)
             Row(
               children: [
                 Expanded(
@@ -395,30 +530,6 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     );
   }
 
-  Widget _buildMapZoneNode(String name, Color color, String status) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color, width: 2),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(name, style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
-          const SizedBox(height: 2),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
-            child: Text(status, style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: color)),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildLegendItem(String label, Color color) {
     return Row(
       children: [
@@ -428,23 +539,4 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       ],
     );
   }
-}
-
-class MapGridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFFCBD5E1)
-      ..strokeWidth = 0.5;
-
-    for (double i = 0; i < size.width; i += 30) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
-    }
-    for (double i = 0; i < size.height; i += 30) {
-      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

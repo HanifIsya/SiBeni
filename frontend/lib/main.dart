@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'core/theme.dart';
 import 'core/user_session.dart';
+import 'core/auth_service.dart';
 import 'core/offline_sync_manager.dart';
-import 'features/login_screen.dart';
+import 'features/auth_screen.dart';
 import 'features/risk_map_screen.dart';
 import 'features/quick_report_screen.dart';
 import 'features/emergency_screen.dart';
@@ -12,6 +13,7 @@ import 'features/dashboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AuthService().initialize();
   await OfflineSyncManager().initialize();
   await UserSession().initialize();
   runApp(const SiBeniApp());
@@ -30,7 +32,7 @@ class SiBeniApp extends StatelessWidget {
         valueListenable: UserSession().currentUser,
         builder: (context, user, _) {
           if (user == null) {
-            return LoginScreen(onLoginSuccess: () {});
+            return AuthScreen(onAuthSuccess: () {});
           }
           return const MainNavigationScreen();
         },
@@ -49,68 +51,80 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
 
-  void _showRoleSwitchDialog() {
+  void _showProfileModal() {
+    final user = UserSession().currentUser.value;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return Padding(
-          padding: const EdgeInsets.all(20.0),
+          padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Ganti Peran / Akun Pengguna', style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.bold)),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ...UserSession.demoPersonas.map((persona) {
-                final isCurrent = UserSession().currentUser.value?.employeeId == persona.employeeId;
-                return ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: isCurrent ? AppTheme.brandPrimary : AppTheme.surfaceMuted,
-                    child: Icon(
-                      persona.role == AppRole.worker
-                          ? Icons.construction
-                          : persona.role == AppRole.supervisor
-                              ? Icons.supervised_user_circle
-                              : persona.role == AppRole.hse
-                                  ? Icons.health_and_safety
-                                  : Icons.business_center,
-                      color: isCurrent ? Colors.white : AppTheme.onSurfaceSecondary,
-                      size: 20,
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: AppTheme.brandPrimary,
+                    child: Text(
+                      user != null && user.fullName.isNotEmpty ? user.fullName[0].toUpperCase() : 'U',
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                     ),
                   ),
-                  title: Text(persona.fullName, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold)),
-                  subtitle: Text('${persona.roleDisplayName} • ${persona.workZone.split(" (")[0]}'),
-                  trailing: isCurrent ? const Icon(Icons.check, color: AppTheme.brandSafetyGreen) : null,
-                  onTap: () {
-                    UserSession().login(persona);
-                    Navigator.pop(context);
-                    setState(() => _currentIndex = 0);
-                  },
-                );
-              }),
-              const SizedBox(height: 12),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user?.fullName ?? 'Karyawan',
+                          style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          '${user?.roleDisplayName ?? "Pekerja"} • ${user?.employeeId ?? ""}',
+                          style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.brandPrimary, fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          user?.workZone.split(' (')[0] ?? 'Pit Utama',
+                          style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              const Divider(color: AppTheme.borderSubtle),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.verified_user_outlined, size: 18, color: AppTheme.brandSafetyGreen),
+                  const SizedBox(width: 8),
+                  Text('Sesi Terverifikasi Supabase Auth', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandSafetyGreen)),
+                ],
+              ),
+              const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () {
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
                     Navigator.pop(context);
-                    UserSession().logout();
+                    await AuthService().signOut();
                   },
-                  icon: const Icon(Icons.logout, color: AppTheme.riskCritical),
-                  label: const Text('Keluar (Ganti Akun Manual)', style: TextStyle(color: AppTheme.riskCritical, fontWeight: FontWeight.bold)),
-                  style: OutlinedButton.styleFrom(side: const BorderSide(color: AppTheme.riskCritical)),
+                  icon: const Icon(Icons.logout, size: 20),
+                  label: const Text('Keluar Akun (Sign Out)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.riskCritical,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
                 ),
               ),
+              const SizedBox(height: 10),
             ],
           ),
         );
@@ -190,7 +204,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 color: AppTheme.brandSecondary,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.smart_toy_outlined, color: Colors.white, size: 20),
+              child: const Icon(Icons.shield, color: Colors.white, size: 20),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -237,9 +251,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.switch_account),
-            tooltip: 'Ganti Peran / Akun',
-            onPressed: _showRoleSwitchDialog,
+            icon: const Icon(Icons.account_circle),
+            tooltip: 'Profil Karyawan',
+            onPressed: _showProfileModal,
           ),
           IconButton(
             icon: const Icon(Icons.notifications_none),

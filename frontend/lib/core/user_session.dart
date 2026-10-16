@@ -52,7 +52,7 @@ class UserProfile {
       (e) => e.name == json['role'],
       orElse: () => AppRole.worker,
     ),
-    workZone: json['workZone'] ?? 'Pit Utama',
+    workZone: json['workZone'] ?? 'Pit Utama (Area Penambangan Aktif)',
     phone: json['phone'] ?? '+62 812-3456-7890',
   );
 }
@@ -65,38 +65,6 @@ class UserSession {
   final ValueNotifier<UserProfile?> currentUser = ValueNotifier<UserProfile?>(null);
   static const String _userKey = 'sibeni_current_user_profile';
 
-  // 4 Preset Demo Personas for instant testing
-  static final List<UserProfile> demoPersonas = [
-    UserProfile(
-      employeeId: 'OP-104',
-      fullName: 'Budi Santoso',
-      role: AppRole.worker,
-      workZone: 'Pit Utama (Area Penambangan Aktif)',
-      phone: '+62 812-3456-7890',
-    ),
-    UserProfile(
-      employeeId: 'SP-202',
-      fullName: 'Hendro Wijaya',
-      role: AppRole.supervisor,
-      workZone: 'Jalan Angkut (Haul Road KM 0-15)',
-      phone: '+62 813-9876-5432',
-    ),
-    UserProfile(
-      employeeId: 'HSE-01',
-      fullName: 'Dr. Citra Utami',
-      role: AppRole.hse,
-      workZone: 'Fasilitas Pendukung (Klinik & HSE Site)',
-      phone: '+62 811-2233-4455',
-    ),
-    UserProfile(
-      employeeId: 'MGT-99',
-      fullName: 'Ir. Bambang Suryo',
-      role: AppRole.management,
-      workZone: 'Fasilitas Pendukung (Site Office)',
-      phone: '+62 819-0011-2233',
-    ),
-  ];
-
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
     final rawUser = prefs.getString(_userKey);
@@ -104,11 +72,10 @@ class UserSession {
       try {
         currentUser.value = UserProfile.fromJson(jsonDecode(rawUser));
       } catch (_) {
-        currentUser.value = demoPersonas[0];
+        currentUser.value = null;
       }
     } else {
-      // Default to Worker for immediate preview
-      currentUser.value = demoPersonas[0];
+      currentUser.value = null;
     }
   }
 

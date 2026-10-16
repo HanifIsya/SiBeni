@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../../core/theme.dart';
 import '../../core/user_session.dart';
 import '../../core/api_service.dart';
@@ -16,6 +18,10 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   int _selectedEmergencyType = 0;
   double _holdProgress = 0.0;
   Timer? _timer;
+
+  // Geographic coordinates for Pit and nearest Assembly Point A
+  final LatLng _workerPos = const LatLng(-2.1458291, 115.3489124);
+  final LatLng _assemblyPointA = const LatLng(-2.1435000, 115.3468000);
 
   final List<Map<String, dynamic>> _emergencyTypes = [
     {'title': 'Kebakaran', 'type': 'fire', 'icon': Icons.local_fire_department, 'color': Colors.red},
@@ -55,8 +61,8 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
       workerName: user != null ? '${user.fullName} (${user.roleDisplayName})' : 'Pekerja Tambang',
       zoneName: user?.workZone ?? 'Pit Utama',
       emergencyType: typeMap['type'] as String,
-      latitude: -2.1458291,
-      longitude: 115.3489124,
+      latitude: _workerPos.latitude,
+      longitude: _workerPos.longitude,
     );
 
     if (!mounted) return;
@@ -238,12 +244,12 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
           ),
           const SizedBox(height: 20),
 
-          // 3. Peta Jalur Evakuasi Digital
+          // 3. Real OpenStreetMap Evacuation Map
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(color: AppTheme.borderSubtle),
             ),
             child: Column(
@@ -252,7 +258,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Jalur Evakuasi Terdekat', style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.bold)),
+                    Text('Jalur Evakuasi OpenStreetMap', style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.bold)),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(color: AppTheme.riskLowBg, borderRadius: BorderRadius.circular(12)),
@@ -260,28 +266,73 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text('Rute: Pit Utama ➔ Jalur Haul Road Barat ➔ Titik Kumpul A (Assembly Point)', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.onSurfaceSecondary)),
+                const SizedBox(height: 4),
+                Text('Rute Digital: Pit Utama ➔ Tanggul Barat ➔ Titik Kumpul A', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary)),
                 const SizedBox(height: 10),
-                Container(
-                  height: 100,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppTheme.borderSubtle),
-                  ),
-                  child: Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    height: 180,
+                    width: double.infinity,
+                    child: FlutterMap(
+                      options: MapOptions(
+                        initialCenter: _workerPos,
+                        initialZoom: 15.2,
+                        minZoom: 13.0,
+                        maxZoom: 18.0,
+                      ),
                       children: [
-                        const Icon(Icons.person_pin, color: AppTheme.brandPrimary, size: 28),
-                        const SizedBox(width: 8),
-                        Text('- - - ➔ - - - ➔', style: GoogleFonts.jetBrainsMono(color: AppTheme.brandSafetyGreen, fontWeight: FontWeight.bold, fontSize: 16)),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.flag, color: AppTheme.brandSafetyGreen, size: 28),
-                        const SizedBox(width: 4),
-                        Text('Titik Kumpul A', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandSafetyGreen)),
+                        TileLayer(
+                          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'com.consnet.sibeni',
+                        ),
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: [
+                                _workerPos,
+                                const LatLng(-2.1448, 115.3475),
+                                _assemblyPointA,
+                              ],
+                              color: AppTheme.brandSafetyGreen,
+                              strokeWidth: 4.0,
+                            ),
+                          ],
+                        ),
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: _workerPos,
+                              width: 32,
+                              height: 32,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: AppTheme.riskCritical,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2.5),
+                                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                                ),
+                                child: const Icon(Icons.person, color: Colors.white, size: 16),
+                              ),
+                            ),
+                            Marker(
+                              point: _assemblyPointA,
+                              width: 100,
+                              height: 44,
+                              child: Column(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(color: AppTheme.brandSafetyGreen, borderRadius: BorderRadius.circular(4)),
+                                    child: Text('Titik Kumpul A', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                                  ),
+                                  const Icon(Icons.flag, color: AppTheme.brandSafetyGreen, size: 20),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),

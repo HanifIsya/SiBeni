@@ -1,0 +1,35 @@
+# Operating System
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Flutter & Dart
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+*.lock
+!.yarn/
+!package-lock.json
+
+# Node & Next.js
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+
+# Environment Variables & Secrets
+.env
+.env*.local
+*.pem
+*.key
+
+# Agent Skills
+.agents/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

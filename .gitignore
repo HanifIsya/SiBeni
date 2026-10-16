@@ -31,6 +31,10 @@ Thumbs.db
 # Supabase CLI temp
 supabase/.temp/
 
+# Android artifacts
+*.apk
+*.aab
+
 # IDE
 .idea/
 .vscode/

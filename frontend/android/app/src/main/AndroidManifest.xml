@@ -5,6 +5,13 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.CAMERA"/>
 
+    <!-- Avatar upload uses the system photo picker. READ_MEDIA_IMAGES is only
+         needed on API <= 32; Android 13+ grants per-photo access. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+
     <application
         android:label="SI BENI"
         android:name="${applicationName}"

@@ -11,6 +11,7 @@ import '../core/location_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../core/zone_model.dart';
+import '../features/warning_manage_screen.dart';
 import '../widgets/adaptive_page.dart';
 import '../widgets/pills.dart';
 import '../widgets/sb_button.dart';
@@ -121,6 +122,36 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
     }
   }
 
+  /// Frame the whole concession: every zone footprint in view.
+  ///
+  /// This is the "lokasi PT" control. The camera is fitted to the union of the
+  /// zone geometry read from Postgres, so it stays correct if the site moves or
+  /// a zone is added, and it never depends on the device having a GPS fix.
+  void _fitSite() {
+    final points = <LatLng>[];
+    for (final zone in _zones) {
+      final geometry = _geometry(zone);
+      if (geometry.center != null) points.add(geometry.center!);
+      points.addAll(geometry.polygon);
+    }
+
+    if (points.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Geometri zona belum tersedia di server.')),
+      );
+      return;
+    }
+
+    if (points.length == 1) {
+      _map.move(points.first, 15.5);
+    } else {
+      final bounds = LatLngBounds.fromPoints(points);
+      _map.fitCamera(
+        CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(46)),
+      );
+    }
+  }
+
   void _openZone(Map<String, dynamic> zone) {
     final geometry = ZoneGeometry.fromJson(zone['polygon_coordinates']);
     final assemblyName = (zone['evacuation_assembly_point'] ?? '').toString();
@@ -146,7 +177,20 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
         declaredDistance: zone['distance_to_assembly_point_m'] as int?,
         hasFix: me != null,
         onNavigateEmergency: widget.onNavigateToEmergency,
+        canManageWarnings: _role.canManageWarnings,
+        onManageWarnings: _openWarningManager,
       ),
+    );
+  }
+
+  AppRole get _role => UserSession.instance.currentUser.value?.role ?? AppRole.worker;
+
+  void _openWarningManager() {
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const WarningManageScreen(),
     );
   }
 
@@ -201,6 +245,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
               warnings: _warnings,
               onZoneTap: _openZone,
               onRecentre: _recentre,
+              onFitSite: _fitSite,
             ),
             const SizedBox(height: AppTheme.md),
             const _Legend(),
@@ -558,6 +603,7 @@ class _MapCard extends StatelessWidget {
     required this.warnings,
     required this.onZoneTap,
     required this.onRecentre,
+    required this.onFitSite,
   });
 
   final MapController mapController;
@@ -565,6 +611,7 @@ class _MapCard extends StatelessWidget {
   final List<Map<String, dynamic>> warnings;
   final void Function(Map<String, dynamic>) onZoneTap;
   final VoidCallback onRecentre;
+  final VoidCallback onFitSite;
 
   @override
   Widget build(BuildContext context) {
@@ -696,7 +743,14 @@ class _MapCard extends StatelessWidget {
                           _MapButton(
                             icon: Icons.my_location_rounded,
                             filled: true,
+                            tooltip: 'Posisikan ke lokasi saya',
                             onTap: onRecentre,
+                          ),
+                          const SizedBox(height: 8),
+                          _MapButton(
+                            icon: Icons.factory_rounded,
+                            tooltip: 'Tampilkan seluruh lokasiPT',
+                            onTap: onFitSite,
                           ),
                         ],
                       ),
@@ -719,20 +773,28 @@ class _MapCard extends StatelessWidget {
       },
     );
   }
-
-  static ZoneGeometry _geometry(Map<String, dynamic> zone) =>
-      ZoneGeometry.fromJson(zone['polygon_coordinates']);
 }
 
+/// Zone geometry parser, shared by the map card and the screen state.
+ZoneGeometry _geometry(Map<String, dynamic> zone) =>
+    ZoneGeometry.fromJson(zone['polygon_coordinates']);
+
 class _MapButton extends StatelessWidget {
-  const _MapButton({required this.icon, required this.onTap, this.filled = false});
+  const _MapButton({
+    required this.icon,
+    required this.onTap,
+    this.filled = false,
+    this.tooltip,
+  });
+
   final IconData icon;
   final VoidCallback onTap;
   final bool filled;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final button = GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
         onTap();
@@ -750,6 +812,9 @@ class _MapButton extends StatelessWidget {
         child: Icon(icon, size: 18, color: filled ? Colors.white : AppTheme.ink),
       ),
     );
+
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
   }
 }
 
@@ -994,6 +1059,8 @@ class _ZoneSheet extends StatelessWidget {
     required this.declaredDistance,
     required this.hasFix,
     required this.onNavigateEmergency,
+    required this.canManageWarnings,
+    required this.onManageWarnings,
   });
 
   final String name;
@@ -1006,6 +1073,8 @@ class _ZoneSheet extends StatelessWidget {
   final int? declaredDistance;
   final bool hasFix;
   final VoidCallback onNavigateEmergency;
+  final bool canManageWarnings;
+  final VoidCallback onManageWarnings;
 
   @override
   Widget build(BuildContext context) {
@@ -1134,6 +1203,21 @@ class _ZoneSheet extends StatelessWidget {
                 onNavigateEmergency();
               },
             ),
+
+            // Zone administration is limited to HSE / management.
+            if (canManageWarnings) ...[
+              const SizedBox(height: 10),
+              SbButton(
+                label: 'Kelola Peringatan Dini',
+                icon: Icons.campaign_rounded,
+                variant: SbButtonVariant.ghost,
+                tone: AppTheme.brand,
+                onPressed: () {
+                  Navigator.pop(context);
+                  onManageWarnings();
+                },
+              ),
+            ],
           ],
         ),
       ),

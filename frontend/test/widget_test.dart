@@ -43,14 +43,54 @@ void main() {
     await tester.pump(const Duration(milliseconds: 900));
 
     expect(find.byType(AppShell), findsOneWidget);
-    // Role-aware navigation exposes five destinations for an HSE account.
+    // HSE owns report review, so both destinations are present.
     expect(find.text('Peta'), findsOneWidget);
     expect(find.text('Lapor'), findsOneWidget);
     expect(find.text('Darurat'), findsOneWidget);
     expect(find.text('Inspeksi'), findsOneWidget);
-    expect(find.text('Insight'), findsOneWidget);
+    expect(find.text('Laporan'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     UserSession.instance.currentUser.value = null;
+  });
+
+  testWidgets('each role gets a distinct navigation set', (tester) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // A worker files reports and triggers alarms; nothing else.
+    expect(AppRole.worker.canVerifyTickets, isFalse);
+    expect(AppRole.worker.canReviewReports, isFalse);
+    expect(AppRole.worker.canViewInsight, isFalse);
+
+    // A supervisor verifies corrective actions but never reviews reports or
+    // publishes warnings.
+    expect(AppRole.supervisor.canVerifyTickets, isTrue);
+    expect(AppRole.supervisor.canReviewReports, isFalse);
+    expect(AppRole.supervisor.canManageWarnings, isFalse);
+    expect(AppRole.supervisor.canViewInsight, isTrue);
+    expect(AppRole.supervisor.canEditInsight, isFalse);
+
+    // HSE owns hazard review and early warnings.
+    expect(AppRole.hse.canReviewReports, isTrue);
+    expect(AppRole.hse.canManageWarnings, isTrue);
+    expect(AppRole.hse.canEditInsight, isFalse);
+
+    // Only management owns the official K3 / ESG record.
+    expect(AppRole.management.canEditInsight, isTrue);
+
+    // And the four sets are genuinely different.
+    final signatures = AppRole.values
+        .map((r) => [
+              r.canVerifyTickets,
+              r.canReviewReports,
+              r.canManageWarnings,
+              r.canViewInsight,
+              r.canEditInsight,
+            ].join())
+        .toSet();
+    expect(signatures.length, AppRole.values.length,
+        reason: 'every role must have a distinct capability signature');
   });
 }

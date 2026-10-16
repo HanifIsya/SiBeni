@@ -1,68 +1,127 @@
-import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { NextRequest, NextResponse } from "next/server";
+import { getUserClient } from "@/lib/supabase";
+import { resolveProfile } from "@/lib/auth";
 
-export async function GET() {
+export const dynamic = "force-dynamic";
+
+const NUMERIC_FIELDS = [
+  "safe_man_hours",
+  "total_recordable_incidents",
+  "calculated_trir",
+  "energy_electricity_gj",
+  "energy_natural_gas_gj",
+  "energy_diesel_fuel_gj",
+  "energy_other_gj",
+  "total_energy_gj",
+  "material_hauled_ton",
+  "energy_intensity_gj_per_ton",
+  "total_co2e_emissions_ton",
+];
+
+/**
+ * GET /api/kpi
+ *
+ * K3, energy and carbon metrics.
+ *
+ * There is deliberately NO fallback payload here. The previous implementation
+ * returned a hardcoded "kpis" block when the table was empty, which meant the
+ * dashboard could show confident numbers that nobody had actually measured.
+ * An empty response is now the honest answer.
+ */
+export async function GET(req: NextRequest) {
   try {
-    const { data, error } = await supabase
+    const client = getUserClient(req);
+    const { data, error } = await client
       .from("energy_emission_metrics")
       .select("*")
       .order("record_date", { ascending: false })
-      .limit(1)
-      .single();
+      .limit(12);
 
-    if (error || !data) {
-      // Aligned with DESIGN.md and PDF presentation
-      return NextResponse.json({
-        kpis: {
-          safe_man_hours: {
-            value: 1247652,
-            unit: "jam",
-            change_pct: 12.4,
-            label: "Total Jam Kerja Aman",
-          },
-          trir: {
-            value: 0.48,
-            unit: "",
-            change_pct: -20.0,
-            label: "TRIR (Total Recordable Incident Rate)",
-            target: 0.5,
-          },
-          total_energy: {
-            value: 24785,
-            unit: "GJ",
-            change_pct: -3.1,
-            label: "Energi Total",
-          },
-          energy_intensity: {
-            value: 2.41,
-            unit: "GJ/ton",
-            change_pct: -5.5,
-            label: "Intensitas Energi",
-          },
-          total_co2e: {
-            value: 12456,
-            unit: "ton",
-            change_pct: -6.8,
-            label: "Emisi Total CO2e",
-          },
-        },
-        energy_breakdown: [
-          { source: "Listrik PLN & Genset", percentage: 45, value_gj: 11153 },
-          { source: "Gas Alam", percentage: 25, value_gj: 6196 },
-          { source: "BBM Solar Industri", percentage: 15, value_gj: 3718 },
-          { source: "Lainnya", percentage: 15, value_gj: 3718 },
-        ],
-        incident_trend: [
-          { month: "Jan", near_miss: 12, incident: 0 },
-          { month: "Feb", near_miss: 15, incident: 1 },
-          { month: "Mar", near_miss: 19, incident: 0 },
-          { month: "Apr", near_miss: 24, incident: 1 },
-          { month: "Mei", near_miss: 22, incident: 0 },
-        ],
-      });
+    if (error) throw error;
+
+    const history = data ?? [];
+
+    // Derive the energy split from the latest period only; the shares must
+    // always add up to the reported total rather than to invented percentages.
+    const latest = history[0] ?? null;
+    let breakdown: any[] = [];
+    if (latest) {
+      const parts = [
+        { source: "Listrik & genset", value: latest.energy_electricity_gj, color: "brand" },
+        { source: "Gas alam", value: latest.energy_natural_gas_gj, color: "accent" },
+        { source: "BBM solar", value: latest.energy_diesel_fuel_gj, color: "amber" },
+        { source: "Lainnya", value: latest.energy_other_gj, color: "muted" },
+      ];
+      const total =
+        parts.reduce((acc, p) => acc + Number(p.value || 0), 0) || 0;
+      breakdown = parts.map((p) => ({
+        source: p.source,
+        color: p.color,
+        value_gj: Number(p.value || 0),
+        share: total > 0 ? Number((Number(p.value || 0) / total) * 100).toFixed(1) : 0,
+      }));
     }
 
-    return NextResponse.json({ data });
+    return NextResponse.json({
+      data: latest,
+      history,
+      energy_breakdown: breakdown,
+      has_data: Boolean(latest),
+    });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+/**
+ * PATCH /api/kpi
+ *
+ * Upserts one reporting period. RLS restricts writes to hse / management; the
+ * client additionally gates the edit affordance to management.
+ */
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const profile = await resolveProfile(req);
+    if (!profile) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const recordDate: string = body.record_date || new Date().toISOString().slice(0, 10);
+
+    const payload: Record<string, unknown> = {
+      record_date: recordDate,
+      updated_at: new Date().toISOString(),
+    };
+
+    for (const field of NUMERIC_FIELDS) {
+      if (body[field] !== undefined && body[field] !== null && body[field] !== "") {
+        const parsed = Number(body[field]);
+        if (Number.isFinite(parsed)) payload[field] = parsed;
+      }
+    }
+
+    if (Object.keys(payload).length <= 2) {
+      return NextResponse.json(
+        { error: "Tidak ada metrik yang dikirim." },
+        { status: 400 }
+      );
+    }
+
+    const client = getUserClient(req);
+    const { data, error } = await client
+      .from("energy_emission_metrics")
+      .upsert(payload, { onConflict: "record_date" })
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+
+    return NextResponse.json({
+      message: "Metrik K3 & ESG berhasil disimpan.",
+      data,
+      updated_by: profile.full_name,
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

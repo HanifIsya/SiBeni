@@ -5,7 +5,7 @@ PT Consnet Mining · Android-first, responsif hingga tablet dan web
 
 | | |
 | :--- | :--- |
-| **Document** | Design System v3.0 |
+| **Document** | Design System v3.1 |
 | **Scope** | Flutter client (`frontend/lib`), design tokens, motion, interaction |
 | **Compliance** | Kepmen ESDM 1827 K/30/MEM/2018 · ISO 45001:2018 · WCAG 2.2 AA (AAA on critical surfaces) |
 | **Status** | Production |
@@ -168,22 +168,40 @@ Enforcement rules, applied by `AdaptivePage` on every screen:
 
 ## 4. Information Architecture
 
-Navigation is role-aware and always five destinations at most.
+Navigation is derived from the signed-in role. The four roles are deliberately
+**four different products**, not one product with a different name on a profile
+card:
 
 ```
-SI BENI ─────────────────────────────── [Online · Seluler] (IS)
-│
-├─ Peta         Risk map, early warnings, GNSS position
-├─ Lapor        Hazard & near-miss capture            ← all roles
-├─ Darurat      3-second hold SOS + evacuation         ← all roles
-├─ Inspeksi     Corrective-action pipeline            ← Supervisor, HSE, Management
-└─ Insight      K3, energy & carbon metrics           ← HSE, Management
+                        Peta  Lapor  Darurat  Inspeksi  Laporan  Insight   Peringatan*
+Pekerja      (worker)      ●     ●       ●                        ·             ·
+Supervisor                ●     ●       ●       ●                ●             ·
+HSE                         ●     ●       ●       ●       ●                ●
+Manajemen                  ●     ●       ●               ●       ●             ●
+
+●  primary tab in the bottom bar / navigation rail
+·  secondary module, reached from the overflow sheet
+*  Peringatan = early-warning administration
 ```
+
+| Role | Owns | Cannot |
+| :--- | :--- | :--- |
+| **Pekerja** | Files hazard & near-miss reports, triggers SOS, sees their own GNSS position | Read the site register, verify tickets, touch K3 figures |
+| **Supervisor** | Verifies corrective actions, reads K3/ESG read-only | Review hazard reports, publish warnings, write K3 figures |
+| **HSE** | Reviews every filed report (accept / reject / close), publishes and stands down early warnings | Write the official K3/ESG record |
+| **Manajemen** | Reviews reports, **owns the official K3/ESG figures**, oversees the whole system | — |
+
+Capabilities are declared once in `AppRoleCapabilities` (`core/user_session.dart`)
+and enforced a second time in Postgres Row Level Security, so a tampered client
+gains nothing. Both sides are covered by `backend/e2e-writepaths.mjs`, which
+asserts that each forbidden action really does return `403`.
 
 The app bar is a single 58 dp band carrying only identity and system state:
-brand mark, employee ID, name · role, live connectivity capsule, avatar, settings.
-The previous design spent a further 40 dp on a full-width connectivity banner on
-every screen; that is now a capsule, reclaimed as reading area.
+brand mark, employee ID, name · role, live connectivity capsule, overflow menu,
+avatar, settings. The previous design spent a further 40 dp on a full-width
+connectivity banner on every screen; that is now a capsule, reclaimed as reading
+area. The title block sheds its employee chip below a 120 dp budget and its
+subtitle below 84 dp, so it degrades instead of overflowing.
 
 ### 4.1 M-01 · Risk Map
 
@@ -201,7 +219,18 @@ every screen; that is now a capsule, reclaimed as reading area.
 > **Data contract.** Zone geometry (`polygon_coordinates`: centre, ring, assembly
 > point) lives in `mining_zones` and is read at runtime. No coordinate is compiled
 > into the client. Relocating a site is a data change, not a release.
-> See `supabase/migrations/003_zone_geometry.sql`.
+> See `supabase/migrations/003_zone_geometry.sql` and `004_surabaya_site_and_write_paths.sql`.
+>
+> **Site.** The concession sits in the Driyorejo industrial corridor east of
+> Surabaya, East Java — pit centred on `-7.2200, 112.7500`. PT Consnet Mining is
+> a fictional operator for this project; the coordinates describe a plausible
+> aggregate/cement industrial site and are set purely in the database.
+
+**Two ways to orient.** The map carries a `my_location` control that centres on
+the device's live GNSS fix, and a separate `factory` control that frames the
+whole concession by fitting the camera to the union of every zone footprint. The
+latter never depends on the device having a fix, which matters when a supervisor
+reviews the site from a vehicle with no sky view.
 
 ### 4.2 M-02 · Quick Report
 
@@ -247,6 +276,47 @@ rather than implying the control room has been reached.
 Four KPI tiles plus a carbon hero panel and an energy-composition breakdown with
 animated bar fills. Missing values render as `—`. There are no hardcoded targets
 or trend percentages.
+
+**Who may write these figures.** Supervisor, HSE and Management all read the
+numbers, but only **Management** sees the `Perbarui Data` affordance. For
+everyone else the screen carries an explicit *Hanya baca* pill and a one-line
+explanation, so a read-only user is never left wondering whether the screen is
+broken. This mirrors the database policy
+(`ESG metrics insertable/updatable by management`).
+
+### 4.6 M-06 · Report Review
+
+A filed report is not finished until someone decides its fate. HSE and
+Management get a register with a status summary, four filters, and a review
+sheet carrying the full report plus notes and three verdicts:
+
+```
+SUBMITTED ──▶ IN_REVIEW ──▶ ACTION_REQUIRED ──▶ CLOSED
+   (baru)      (ditinjau)      (perlu tindakan)     (ditutup)
+```
+
+The register is scoped by RLS: a worker only ever sees their own submissions.
+This module is the reason the earlier "report sent, nothing happens" feeling
+existed — filing was the whole loop, and closing it is what makes the loop
+mean something.
+
+### 4.7 M-07 · Early Warning Administration
+
+Direct answer to "are the early warnings hardcoded?" — **no**. They are rows in
+`early_warnings` served by `/api/bmkg`, and this screen is where HSE and
+Management publish, amend, and stand them down. A warning carries severity,
+affected zones, hazard tags, safety instructions, and an expiry; standing one
+down is a soft delete so the audit trail survives.
+
+### 4.8 Account
+
+Display name, contact number, and avatar are self-editable. Avatar uploads go to
+the private `avatars` Storage bucket under a path scoped to the caller's UUID,
+and the write is additionally gated by a trigger that rejects any attempt to
+change `hse_status`, `hse_notes`, or `reporter_id`.
+
+**Employee number and role are read-only in the UI** and absent from the update
+payload — a worker cannot self-promote to HSE.
 
 ---
 
@@ -365,7 +435,7 @@ resolve a position, the map falls back to zone geometry from the database.
 | Item | Value |
 | :--- | :--- |
 | Application ID | `com.consnet.sibeni.sibeni` |
-| Version | 1.1.0 (+2) |
+| Version | 1.2.0 (+3) |
 | Min SDK | Flutter default (21) |
 | Signing | Release keystore (`android/sibeni-release.jks` + `android/key.properties`, git-ignored and injected from the CI secret store) |
 | Permissions | INTERNET, ACCESS_NETWORK_STATE, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, CAMERA |

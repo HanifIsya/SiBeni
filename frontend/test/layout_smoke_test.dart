@@ -6,11 +6,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sibeni/core/theme.dart';
 import 'package:sibeni/core/user_session.dart';
 import 'package:sibeni/features/auth_screen.dart';
-import 'package:sibeni/features/dashboard_screen.dart';
 import 'package:sibeni/features/emergency_screen.dart';
 import 'package:sibeni/features/inspection_screen.dart';
+import 'package:sibeni/features/insight_screen.dart';
+import 'package:sibeni/features/profile_edit_screen.dart';
 import 'package:sibeni/features/quick_report_screen.dart';
+import 'package:sibeni/features/report_review_screen.dart';
 import 'package:sibeni/features/risk_map_screen.dart';
+import 'package:sibeni/features/warning_manage_screen.dart';
 import 'package:sibeni/features/settings_sheet.dart';
 import 'package:sibeni/main.dart';
 import 'package:sibeni/widgets/sb_button.dart';
@@ -105,7 +108,10 @@ void main() {
     'Quick report': () => const QuickReportScreen(),
     'Emergency': () => const EmergencyScreen(),
     'Inspection': () => const InspectionScreen(),
-    'Insight': () => const DashboardScreen(),
+    'Report review': () => const ReportReviewScreen(),
+    'Warning manager': () => const WarningManageScreen(),
+    'Insight': () => const InsightScreen(),
+    'Profile edit': () => const ProfileEditScreen(),
   };
 
   screens.forEach((name, build) {

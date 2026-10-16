@@ -15,6 +15,15 @@ class AuthService {
 
   SupabaseClient get client => Supabase.instance.client;
 
+  /// The caller's access token, forwarded to the B2B API so that Row Level
+  /// Security is evaluated against this user rather than `anon`.
+  String? get accessToken => client.auth.currentSession?.accessToken;
+
+  /// The Supabase auth id (a UUID), which is what `hazard_reports.reporter_id`
+  /// and `emergency_sos_logs.worker_id` expect. The employee number is NOT a
+  /// valid value for those columns.
+  String? get userId => client.auth.currentUser?.id;
+
   Future<void> initialize() async {
     await Supabase.initialize(
       url: AppConfig.supabaseUrl,
@@ -37,6 +46,7 @@ class AuthService {
 
       if (res != null) {
         final profile = UserProfile(
+          authId: userId,
           employeeId: res['employee_id'] as String? ?? '—',
           fullName: res['full_name'] as String? ?? 'Karyawan Tambang',
           role: AppRole.values.firstWhere(
@@ -45,6 +55,7 @@ class AuthService {
           ),
           workZone: res['work_zone'] as String? ?? 'Pit Utama',
           phone: res['phone_number'] as String?,
+          avatarUrl: res['avatar_url'] as String?,
         );
         await UserSession.instance.login(profile);
         return profile;
@@ -69,6 +80,10 @@ class AuthService {
     return response;
   }
 
+  /// Self-registration.
+  ///
+  /// New accounts are always provisioned as `worker` by the database trigger —
+  /// role escalation at sign-up would defeat the entire permission model.
   Future<AuthResponse> signUp({
     required String email,
     required String password,
@@ -76,6 +91,7 @@ class AuthService {
     String? employeeId,
     required AppRole role,
     required String workZone,
+    String? phone,
   }) async {
     final response = await client.auth.signUp(
       email: email.trim(),
@@ -83,14 +99,88 @@ class AuthService {
       data: {
         'full_name': fullName.trim(),
         'employee_id': employeeId?.trim(),
-        'role': role.name,
+        // Sent for audit only; the trigger forces the effective role.
+        'requested_role': role.name,
         'work_zone': workZone,
+        'phone_number': phone?.trim(),
       },
     );
     if (response.user != null) {
       await loadUserProfile(response.user!.id);
     }
     return response;
+  }
+
+  /// Update the signed-in user's own profile.
+  ///
+  /// Allowed by the "Users can update own profile" policy. `role` is
+  /// deliberately absent from the payload: nobody may change their own role.
+  Future<({bool ok, String? error})> updateProfile({
+    required String fullName,
+    String? phone,
+    String? avatarUrl,
+  }) async {
+    final uid = userId;
+    if (uid == null) return (ok: false, error: 'Sesi berakhir. Silakan masuk kembali.');
+
+    try {
+      final patch = <String, dynamic>{
+        'full_name': fullName.trim(),
+        'phone_number': (phone == null || phone.trim().isEmpty) ? null : phone.trim(),
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      if (avatarUrl != null) patch['avatar_url'] = avatarUrl;
+
+      final res = await client
+          .from('profiles')
+          .update(patch)
+          .eq('id', uid)
+          .select('id, full_name, phone_number, avatar_url')
+          .maybeSingle();
+
+      if (res == null) {
+        return (ok: false, error: 'Profil tidak dapat diperbarui. Akses ditolak.');
+      }
+
+      await loadUserProfile(uid);
+      return (ok: true, error: null);
+    } catch (e) {
+      debugPrint('updateProfile failed: $e');
+      return (ok: false, error: 'Gagal menyimpan profil. Periksa koneksi Anda.');
+    }
+  }
+
+  Future<String?> uploadAvatar({
+    required Uint8List bytes,
+    required String fileName,
+    String mimeType = 'image/png',
+  }) async {
+    final uid = userId;
+    if (uid == null) return null;
+
+    try {
+      // Path is scoped to the user id, matching the storage RLS policy.
+      final path = '$uid/avatar.png';
+      await client.storage.from('avatars').uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(contentType: mimeType, upsert: true),
+          );
+      return client.storage.from('avatars').getPublicUrl(path);
+    } catch (e) {
+      debugPrint('uploadAvatar failed: $e');
+      return null;
+    }
+  }
+
+  Future<String?> signedAvatarUrl(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http')) return path;
+    try {
+      return client.storage.from('avatars').createSignedUrl(path, const Duration(hours: 6).inSeconds);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> signOut() async {

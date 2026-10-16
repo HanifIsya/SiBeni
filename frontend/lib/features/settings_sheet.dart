@@ -387,7 +387,7 @@ class _SettingsSheet extends StatelessWidget {
                     _Row(
                       icon: Icons.info_outline_rounded,
                       label: 'Versi aplikasi',
-                      value: '1.1.0',
+                      value: '1.2.0',
                     ),
                     _Divider(),
                     _Row(

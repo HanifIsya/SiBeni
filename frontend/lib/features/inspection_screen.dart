@@ -31,6 +31,9 @@ class _InspectionScreenState extends State<InspectionScreen> {
   bool _loading = true;
   String _filter = 'all';
 
+  /// Ticket currently being advanced, so only that button shows a spinner.
+  String? _busyId;
+
   @override
   void initState() {
     super.initState();
@@ -71,32 +74,45 @@ class _InspectionScreenState extends State<InspectionScreen> {
     final current = _stage(ticket);
     if (current >= 6) return;
 
+    final id = (ticket['id'] ?? '').toString();
+    if (id.isEmpty) {
+      _toast('Tiket ini tidak memiliki ID server.', AppTheme.riskCritical);
+      return;
+    }
+
+    setState(() => _busyId = id);
+
     final verifier = UserSession.instance.currentUser.value?.fullName ?? 'Petugas HSE';
-    final ok = await ApiService.instance.advanceCorrectiveActionStage(
-      id: (ticket['id'] ?? '').toString(),
+    final result = await ApiService.instance.advanceCorrectiveActionStage(
+      id: id,
       nextStage: current + 1,
       note: 'Diverifikasi $verifier pada ${DateFormat('d MMM yyyy, HH:mm').format(DateTime.now())}',
     );
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: ok ? AppTheme.online : AppTheme.offline,
-        content: Text(
-          ok
-              ? 'Tahap $_stages[current] selesai — lanjut ke ${_stages[current]}.'
-              : 'Perubahan disimpan di perangkat dan akan dikirim ulang.',
-        ),
-      ),
+    setState(() => _busyId = null);
+
+    // Show exactly what happened. The previous version reported a device-local
+    // save that never existed, so a failed verification looked like a no-op.
+    _toast(
+      result.message ?? result.error ?? 'Gagal memperbarui.',
+      result.isSuccess ? AppTheme.online : AppTheme.riskCritical,
     );
-    if (ok) _load();
+
+    if (result.isSuccess) _load();
+  }
+
+  void _toast(String message, Color tone) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(backgroundColor: tone, content: Text(message)),
+    );
   }
 
   // ------------------------------------------------------------------- build
   @override
   Widget build(BuildContext context) {
     final user = UserSession.instance.currentUser.value;
-    final canVerify = user?.canVerify ?? false;
+    final canVerify = user?.role.canVerifyTickets ?? false;
 
     return AdaptivePage(
       onRefresh: _load,
@@ -137,6 +153,7 @@ class _InspectionScreenState extends State<InspectionScreen> {
                 stage: _stage(ticket),
                 stages: _stages,
                 canVerify: canVerify,
+                busy: _busyId == (ticket['id'] ?? '').toString(),
                 onAdvance: () => _advance(ticket),
               ),
             ),
@@ -371,6 +388,7 @@ class _TicketCard extends StatelessWidget {
     required this.stage,
     required this.stages,
     required this.canVerify,
+    required this.busy,
     required this.onAdvance,
   });
 
@@ -378,6 +396,7 @@ class _TicketCard extends StatelessWidget {
   final int stage;
   final List<String> stages;
   final bool canVerify;
+  final bool busy;
   final VoidCallback onAdvance;
 
   @override
@@ -456,7 +475,8 @@ class _TicketCard extends StatelessWidget {
               icon: Icons.arrow_forward_rounded,
               height: 46,
               tone: color,
-              onPressed: onAdvance,
+              loading: busy,
+              onPressed: busy ? null : onAdvance,
             ),
           ],
         ],

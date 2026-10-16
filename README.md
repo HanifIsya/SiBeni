@@ -51,12 +51,17 @@
 
 ---
 
-## ⚡ 5 Fitur Utama SI BENI
+## ⚡ Fitur Utama SI BENI
 
-1. **Peta Risiko & Peringatan Dini (Screen M-01)**
-   - Pemetaan spasial 7 zona kerja operasional tambang: *Pit Utama, Jalan Angkut KM 0-15, Stockpile, Workshop, Fasilitas Pengolahan, Gudang Handak, dan Fasilitas Pendukung*.
-   - Standarisasi 4 Tingkat Risiko: **Rendah (Hijau)**, **Sedang (Kuning)**, **Tinggi (Oranye)**, **Sangat Tinggi (Merah)**.
-   - Peringatan dini resmi dari BMKG & BNPB untuk mitigasi cuaca ekstrem, tanah longsor, dan banjir.
+> **Lokasi site**: koridor industri Driyorejo, Surabaya Timur (`-7.2200, 112.7500`).
+> PT Consnet Mining adalah perusahaan fiktif untuk keperluan proyek; seluruh
+> koordinat zona berada di database, bukan di dalam aplikasi.
+
+1. **Peta Risiko & Peringatan Dini (M-01)**
+   - Pemetaan spasial 7 zona kerja operasional: *Pit Utama, Jalan Angkut KM 0-15, Stockpile, Workshop, Crusher Plant, Gudang Handak, dan Fasilitas Pendukung*.
+   - Standarisasi 4 Tingkat Risiko: **Rendah**, **Sedang**, **Tinggi**, **Kritis** — lengkap dengan warna, ikon, dan label teks.
+   - Dua kontrol lokasi: **Posisi Saya** (GNSS langsung) dan **Lokasi PT** (menampilkan seluruh area konsesi).
+   - Peringatan dini **bukan hardcoded** — bersumber dari tabel `early_warnings` dan dikelola penuh oleh HSE.
 
 2. **Lapor Cepat Bahaya & Near Miss — Offline-First (Screen M-02)**
    - Alur tunggal terstruktur dalam tempo < 30 detik: pemilih tipe insiden (*Bahaya* vs *Near Miss*), koordinat GNSS **riel perangkat** + zona otomatis, kategori bahaya, dan input deskripsi.
@@ -72,10 +77,41 @@
    - Checklist digital berkala: *APD, Alat Berat, Jalan Angkut, APAR, Housekeeping, Lingkungan*.
    - Alur 6 Tahap Tindak Lanjut (*Inspection → Identified → Verified → Assigned → In Progress → Closed*).
 
-5. **Dashboard K3, Energi & Emisi Karbon (Screen M-05 & W-01)**
+5. **Dashboard K3, Energi & Emisi Karbon (M-05 & W-01)**
    - 4 KPI utama + panel hero emisi karbon: *Safe Man-Hours*, **TRIR**, **Konsumsi Energi**, **Intensitas Energi**, **Emisi CO₂e**.
    - Komposisi energi per sumber dengan bar animasi, dan periode pelaporan dari database.
    - **Tanpa angka hardcoded**: bila server belum mengembalikan nilai, kartu menampilkan `—` — sistem keselamatan tidak pernah menampilkan angka karangan.
+   - **Hanya Manajemen** yang dapat mengisi/memperbarui angka resmi ( Supervisor dan HSE membaca saja).
+
+6. **Tinjauan Laporan Bahaya (M-06) — baru**
+   - Register laporan dengan ringkasan status dan empat filter: *Baru · Ditinjau · Tindak Lanjut · Ditutup*.
+   - Alur keputusan: `SUBMITTED → IN_REVIEW → ACTION_REQUIRED → CLOSED`, dengan catatan peninjauan.
+   - Hanya **HSE dan Manajemen** yang dapat menutup laporan.
+
+7. **Kelola Peringatan Dini (M-07) — baru**
+   - Terbitkan, ubah, dan nonaktifkan peringatan dini (severity, zona terdampak, label bahaya, tindakan keselamatan, masa berlaku).
+   - Akses untuk **HSE dan Manajemen**. Penonaktifan bersifat *soft delete* agar jejak audit tetap ada.
+
+8. **Edit Profil — baru**
+   - Pengguna dapat mengubah nama, nomor HP, dan foto profil (unggah ke bucket privat `avatars`).
+   - Nomor pegawai, peran, dan zona penugasan bersifat **read-only** — ditetapkan HSE dan tidak dapat diubah dari aplikasi.
+
+---
+
+## 🔐 Pembedaan Peran
+
+Keempat peran memiliki modul yang benar-benar berbeda, bukan sekadar nama berbeda di halaman profil.
+
+| Peran | Modul Utama | Wajib | Tidak Boleh |
+| :--- | :--- | :--- | :--- |
+| **Pekerja** | Peta, Lapor, Darurat | Melaporkan bahaya, mengaktifkan SOS | Melihat register, memverifikasi tiket, mengubah angka K3 |
+| **Supervisor** | + Inspeksi, Insight | Memverifikasi tindakan korektif | Meninjau laporan, menerbitkan peringatan, menulis angka K3 |
+| **HSE** | Peta, Lapor, Darurat, Inspeksi, Laporan | Meninjau & menutup laporan, mengelola peringatan | Menulis angka K3/ESG resmi |
+| **Manajemen** | Peta, Lapor, Darurat, Laporan, Insight | Seluruh kewenangan | — |
+
+Matriks ini didefinisikan di `frontend/lib/core/user_session.dart` (`AppRoleCapabilities`) **dan** ditegakkan ulang di Postgres melalui Row Level Security, sehingga aplikasi yang dimodifikasi tetap tidak bisa melewati batas peran.
+
+Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — 24 pemeriksaan end-to-end terhadap API sungguhan, termasuk memastikan setiap tindakan terlarang benar-benar menghasilkan `403`.
 
 ---
 
@@ -92,9 +128,24 @@
 2. Jalankan skrip migrasi berurutan:
    - `supabase/migrations/001_initial_schema.sql`
    - `supabase/migrations/002_rls_and_policies.sql`
-   - `supabase/migrations/003_zone_geometry.sql` — memindahkan geometri zona (pusat, poligon, titik kumpul) dari kode klien ke database.
+   - `supabase/migrations/003_zone_geometry.sql` — geometri zona dipindahkan dari kode klien ke database.
+   - `supabase/migrations/004_surabaya_site_and_write_paths.sql` — relokasi site ke Surabaya, perbaikan jalur tulis, Trickle pemicu, bucket avatar, dan pencarian peran.
 3. Masukkan data awal dengan menjalankan:
    - `supabase/seed.sql`
+
+### Verifikasi Jalur Tulis Backend
+
+Jalur tulis di API sebelumnya gagal secara senyap karena JWT pengguna tidak pernah diteruskan ke PostgREST — sehingga Row Level Security selalu dievaluasi sebagai `anon`. Skrip ini memverifikasi seluruh alur terhadap server sungguhan:
+
+```bash
+cd backend
+export NEXT_PUBLIC_SUPABASE_URL="https://<ref>.supabase.co"
+export NEXT_PUBLIC_SUPABASE_ANON_KEY="<anon-key>"
+npm run build && npx next start -p 4310   # terminal terpisah
+node e2e-writepaths.mjs
+```
+
+Target: **24/24 pemeriksaan lulus**, termasuk penolakan `403` untuk setiap tindakan yang di luar kewenangan peran.
 
 ### Menjalankan Aplikasi & Membuat Rilis
 
@@ -102,7 +153,7 @@
 cd frontend
 flutter pub get
 flutter analyze                 # harus: No issues found!
-flutter test                    # 53 uji: tata letak + logika inti
+flutter test                    # 76 uji: tata letak + logika inti + matriks peran
 flutter build apk --release
 # → build/app/outputs/flutter-apk/app-release.apk
 ```

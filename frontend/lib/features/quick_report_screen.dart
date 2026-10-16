@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme.dart';
+import '../../core/user_session.dart';
+import '../../core/api_service.dart';
 import '../../core/offline_sync_manager.dart';
 
 class QuickReportScreen extends StatefulWidget {
@@ -12,19 +14,19 @@ class QuickReportScreen extends StatefulWidget {
 
 class _QuickReportScreenState extends State<QuickReportScreen> {
   String _selectedReportType = 'hazard'; // 'hazard' or 'near_miss'
-  String _selectedZone = 'Pit Utama';
+  String _selectedZone = 'Pit Utama (Area Penambangan Aktif)';
   String _selectedCategory = 'Alat Berat';
   final TextEditingController _descController = TextEditingController();
   bool _isSubmitting = false;
 
-  final List<String> _zones = [
-    'Pit Utama',
-    'Jalan Angkut KM 0-15',
-    'Stockpile & ROM',
-    'Workshop',
-    'Fasilitas Pengolahan',
-    'Gudang Handak',
-    'Fasilitas Pendukung',
+  List<String> _zones = [
+    'Pit Utama (Area Penambangan Aktif)',
+    'Jalan Angkut (Haul Road KM 0-15)',
+    'Stockpile & ROM Timbunan',
+    'Workshop & Maintenance Alat Berat',
+    'Fasilitas Pengolahan (Crusher Plant)',
+    'Gudang Logistik & Handak',
+    'Fasilitas Pendukung (Site Office)',
   ];
 
   final List<String> _categories = [
@@ -36,6 +38,29 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
     'Kepatuhan APD',
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _initUserData();
+  }
+
+  Future<void> _initUserData() async {
+    final user = UserSession().currentUser.value;
+    if (user != null) {
+      _selectedZone = user.workZone;
+    }
+
+    final zones = await ApiService().getMiningZones();
+    if (zones.isNotEmpty && mounted) {
+      setState(() {
+        _zones = zones.map((z) => z['name'].toString()).toList();
+        if (!_zones.contains(_selectedZone) && _zones.isNotEmpty) {
+          _selectedZone = _zones[0];
+        }
+      });
+    }
+  }
+
   Future<void> _submitReport() async {
     if (_descController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -45,9 +70,12 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
     }
 
     setState(() => _isSubmitting = true);
+    final user = UserSession().currentUser.value;
 
     final reportData = {
       'local_id': 'rep-${DateTime.now().millisecondsSinceEpoch}',
+      'reporter_id': user?.employeeId ?? 'EMP-001',
+      'reporter_name': user != null ? '${user.fullName} (${user.roleDisplayName})' : 'Pekerja Lapangan',
       'report_type': _selectedReportType,
       'zone_name': _selectedZone,
       'category': _selectedCategory,
@@ -73,8 +101,8 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
           backgroundColor: isOnline ? AppTheme.brandSafetyGreen : AppTheme.statusOffline,
           content: Text(
             isOnline
-                ? 'Laporan berhasil dikirim langsung ke HSE!'
-                : 'Mode Offline: Laporan tersimpan di perangkat & otomatis terkirim saat online.',
+                ? 'Laporan berhasil dikirim langsung ke Database HSE Supabase!'
+                : 'Mode Offline Aktif: Laporan tersimpan di memori perangkat & otomatis disinkronisasi saat online.',
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
         ),
@@ -84,12 +112,14 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final user = UserSession().currentUser.value;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Slogan Banner
+          // Slogan & Reporter Identity Banner
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -103,13 +133,22 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
                 const Icon(Icons.shield_outlined, color: AppTheme.brandPrimary, size: 20),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    '"Lapor Hari Ini, Cegah Kecelakaan Esok Hari"',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.brandPrimary,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '"Lapor Hari Ini, Cegah Kecelakaan Esok Hari"',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.brandPrimary,
+                        ),
+                      ),
+                      Text(
+                        'Pelapor: ${user?.fullName ?? "Tamu"} • ${user?.employeeId ?? "EMP"}',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -176,7 +215,7 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('NEAR MISS', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13, color: Color(0xFFB45309))),
+                            Text('NEAR MISS', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13, color: const Color(0xFFB45309))),
                             Text('Hampir Celaka', style: GoogleFonts.plusJakartaSans(fontSize: 10, color: AppTheme.onSurfaceSecondary)),
                           ],
                         ),
@@ -196,7 +235,7 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
             children: [
               const Icon(Icons.my_location, size: 14, color: AppTheme.brandPrimary),
               const SizedBox(width: 4),
-              Text('GPS Terdeteksi: -2.1458291, 115.3489124', style: GoogleFonts.jetBrainsMono(fontSize: 11, color: AppTheme.onSurfaceSecondary)),
+              Text('GPS Terdeteksi: -2.1458291, 115.3489124 (Pit Radar)', style: GoogleFonts.jetBrainsMono(fontSize: 11, color: AppTheme.onSurfaceSecondary)),
             ],
           ),
           const SizedBox(height: 8),
@@ -204,11 +243,12 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: _zones.map((zone) {
+                final shortName = zone.split(' (')[0];
                 final isSelected = _selectedZone == zone;
                 return Padding(
                   padding: const EdgeInsets.only(right: 6.0),
                   child: ChoiceChip(
-                    label: Text(zone),
+                    label: Text(shortName),
                     selected: isSelected,
                     onSelected: (val) => setState(() => _selectedZone = zone),
                     selectedColor: AppTheme.brandPrimary,
@@ -248,7 +288,7 @@ class _QuickReportScreenState extends State<QuickReportScreen> {
           ),
           const SizedBox(height: 18),
 
-          // 4. Dokumentasi Foto Box
+          // 4. Dokumentasi Foto Bukti
           Text('Dokumentasi Foto Bukti', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
           const SizedBox(height: 8),
           Container(

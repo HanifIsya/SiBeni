@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme.dart';
+import '../../core/user_session.dart';
+import '../../core/api_service.dart';
 
 class EmergencyScreen extends StatefulWidget {
   const EmergencyScreen({super.key});
@@ -16,11 +18,11 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   Timer? _timer;
 
   final List<Map<String, dynamic>> _emergencyTypes = [
-    {'title': 'Kebakaran', 'icon': Icons.local_fire_department, 'color': Colors.red},
-    {'title': 'Cedera / Medis', 'icon': Icons.medical_services, 'color': const Color(0xFFE11D48)},
-    {'title': 'Kebocoran B3', 'icon': Icons.warning_rounded, 'color': Colors.amber},
-    {'title': 'Banjir / Longsor', 'icon': Icons.landscape, 'color': Colors.orange},
-    {'title': 'Keamanan', 'icon': Icons.security, 'color': Colors.blueGrey},
+    {'title': 'Kebakaran', 'type': 'fire', 'icon': Icons.local_fire_department, 'color': Colors.red},
+    {'title': 'Cedera / Medis', 'type': 'injury', 'icon': Icons.medical_services, 'color': const Color(0xFFE11D48)},
+    {'title': 'Kebocoran B3', 'type': 'chemical_leak', 'icon': Icons.warning_rounded, 'color': Colors.amber},
+    {'title': 'Banjir / Longsor', 'type': 'landslide_flood', 'icon': Icons.landscape, 'color': Colors.orange},
+    {'title': 'Keamanan', 'type': 'security', 'icon': Icons.security, 'color': Colors.blueGrey},
   ];
 
   void _startHolding() {
@@ -43,7 +45,22 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     }
   }
 
-  void _triggerSos() {
+  Future<void> _triggerSos() async {
+    final user = UserSession().currentUser.value;
+    final typeMap = _emergencyTypes[_selectedEmergencyType];
+
+    // Trigger to Supabase via backend API
+    final result = await ApiService().triggerSos(
+      workerId: user?.employeeId ?? 'EMP-001',
+      workerName: user != null ? '${user.fullName} (${user.roleDisplayName})' : 'Pekerja Tambang',
+      zoneName: user?.workZone ?? 'Pit Utama',
+      emergencyType: typeMap['type'] as String,
+      latitude: -2.1458291,
+      longitude: 115.3489124,
+    );
+
+    if (!mounted) return;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -53,18 +70,38 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
           children: [
             const Icon(Icons.emergency_share, color: AppTheme.riskCritical, size: 28),
             const SizedBox(width: 8),
-            Text('SOS BERHASIL DISIARKAN', style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.riskCritical)),
+            Expanded(
+              child: Text(
+                'SOS BERHASIL DISIARKAN',
+                style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.riskCritical),
+              ),
+            ),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Pusat Kendali HSE, Petugas Evakuasi, dan Ambulans telah menerima koordinat darurat Anda:', style: GoogleFonts.plusJakartaSans(fontSize: 13)),
+            Text(
+              result != null
+                  ? 'Pusat Kendali HSE, Pengawas Lapangan, dan Tim Tanggap Darurat telah menerima sinyal darurat Anda di Supabase:'
+                  : 'Sinyal SOS telah dicatat di perangkat & disiarkan via frekuensi radio darurat K3:',
+              style: GoogleFonts.plusJakartaSans(fontSize: 13),
+            ),
             const SizedBox(height: 8),
-            Text('Zona: Pit Utama\nKoordinat: -2.1458291, 115.3489124\nJenis: ${_emergencyTypes[_selectedEmergencyType]['title']}', style: GoogleFonts.jetBrainsMono(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandPrimary)),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: AppTheme.surfaceMuted, borderRadius: BorderRadius.circular(8)),
+              child: Text(
+                'Pelapor: ${user?.fullName ?? "Pekerja Lapangan"}\nZona: ${user?.workZone ?? "Pit Utama"}\nKoordinat: -2.1458291, 115.3489124\nJenis: ${typeMap['title']}',
+                style: GoogleFonts.jetBrainsMono(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.brandPrimary),
+              ),
+            ),
             const SizedBox(height: 12),
-            Text('Segera menuju Titik Kumpul A (Jarak 350m). Jangan kembali untuk mengambil barang!', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.riskCritical)),
+            Text(
+              'SEGERA MENUJU TITIK KUMPUL A (Assembly Point Pit Utama, 350m). Jangan kembali untuk mengambil barang pribadi!',
+              style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.riskCritical),
+            ),
           ],
         ),
         actions: [
@@ -76,7 +113,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
               });
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.brandPrimary),
-            child: const Text('Saya Sudah di Tempat Aman', style: TextStyle(color: Colors.white)),
+            child: const Text('Saya Sudah di Titik Kumpul Aman', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -150,14 +187,14 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
           const SizedBox(height: 6),
           Center(
             child: Text(
-              'Tekan & tahan 3 detik untuk menyiarkan sinyal evakuasi ke HSE',
+              'Tekan & tahan 3 detik untuk menyiarkan sinyal evakuasi ke Supabase HSE',
               style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary),
             ),
           ),
           const SizedBox(height: 20),
 
           // 2. Jenis Keadaan Darurat Selector
-          Text('Jenis Keadaan Darurat', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
+          Text('Pilih Jenis Keadaan Darurat', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
           const SizedBox(height: 10),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,

@@ -150,6 +150,49 @@ async function main() {
     check("worker cannot review", denied.status === 403, `status=${denied.status}`);
   }
 
+  // ------------------------------------------------- conduct K3 inspection
+  const newInspection = await call(sessions.supervisor.token, "/api/inspections", {
+    method: "POST",
+    body: JSON.stringify({
+      inspection_category: "Penggunaan APD",
+      zone_name: "Pit Utama",
+      title: "E2E Test Inspeksi APD",
+      notes: "Semua pekerja di pit diperiksa",
+      passed_items: 4,
+      failed_items: 1,
+      findings: [
+        {
+          item: "Kacamata safety",
+          note: "1 operator tidak memakai kacamata safety saat berdebu",
+          severity: "medium",
+        },
+      ],
+    }),
+  });
+  check(
+    "supervisor can create K3 inspection",
+    newInspection.status === 200 && newInspection.body?.findings_count === 1,
+    newInspection.body?.error || `inspection_id=${newInspection.body?.inspection?.id}`
+  );
+  const createdInspId = newInspection.body?.inspection?.id;
+
+  const workerCreateInsp = await call(sessions.worker.token, "/api/inspections", {
+    method: "POST",
+    body: JSON.stringify({
+      inspection_category: "Penggunaan APD",
+      zone_name: "Pit Utama",
+      title: "Worker Inspection Attempt",
+      passed_items: 5,
+      failed_items: 0,
+      findings: [],
+    }),
+  });
+  check(
+    "worker cannot create K3 inspections",
+    workerCreateInsp.status === 403,
+    `status=${workerCreateInsp.status}`
+  );
+
   // ------------------------------------------------- corrective action advance
   const inspections = await call(sessions.supervisor.token, "/api/inspections");
   const tickets = inspections.body?.corrective_actions || [];
@@ -263,6 +306,12 @@ async function main() {
       auth: { persistSession: false },
     });
     await svc.from("early_warnings").delete().eq("id", warningId);
+  }
+  if (createdInspId) {
+    const svc = createClient(URL_, process.env.SUPABASE_SERVICE_ROLE_KEY || KEY, {
+      auth: { persistSession: false },
+    });
+    await svc.from("k3_inspections").delete().eq("id", createdInspId);
   }
 
   const failed = results.filter((r) => !r.pass);

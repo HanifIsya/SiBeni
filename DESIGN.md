@@ -448,7 +448,7 @@ resolve a position, the map falls back to zone geometry from the database.
 | Item | Value |
 | :--- | :--- |
 | Application ID | `com.consnet.sibeni.sibeni` |
-| Version | 1.2.0 (+3) |
+| Version | 1.3.0 (+4) |
 | Min SDK | Flutter default (21) |
 | Signing | Release keystore (`android/sibeni-release.jks` + `android/key.properties`, git-ignored and injected from the CI secret store) |
 | Permissions | INTERNET, ACCESS_NETWORK_STATE, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, CAMERA |

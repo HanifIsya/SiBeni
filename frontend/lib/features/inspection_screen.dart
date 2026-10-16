@@ -108,6 +108,17 @@ class _InspectionScreenState extends State<InspectionScreen> {
     );
   }
 
+  Future<void> _openNewInspectionSheet() async {
+    final created = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _NewInspectionSheet(),
+    );
+    if (created == true && mounted) {
+      _load();
+    }
+  }
+
   // ------------------------------------------------------------------- build
   @override
   Widget build(BuildContext context) {
@@ -117,10 +128,21 @@ class _InspectionScreenState extends State<InspectionScreen> {
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
-        const SectionHeader(
+        SectionHeader(
           title: 'Inspeksi K3',
           icon: Icons.fact_check_rounded,
-          subtitle: 'Alur tindakan korektif enam tahap',
+          subtitle: canVerify
+              ? 'Pemeriksaan berkala & alur tindakan korektif'
+              : 'Pemantauan alur tindakan korektif lapangan',
+          action: canVerify
+              ? SbButton(
+                  label: 'Inspeksi Baru',
+                  icon: Icons.add_task_rounded,
+                  height: 48,
+                  expand: false,
+                  onPressed: _openNewInspectionSheet,
+                )
+              : null,
         ),
 
         const _PipelineCard(),
@@ -533,6 +555,609 @@ class _TicketSkeleton extends StatelessWidget {
                 SkeletonBox(height: 12),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// Conduct New K3 Inspection Sheet
+// ===========================================================================
+class _NewInspectionSheet extends StatefulWidget {
+  const _NewInspectionSheet();
+
+  @override
+  State<_NewInspectionSheet> createState() => _NewInspectionSheetState();
+}
+
+class _NewInspectionSheetState extends State<_NewInspectionSheet> {
+  static const _categories = [
+    'Penggunaan APD',
+    'Alat Berat',
+    'Jalan Angkut',
+    'APAR',
+    'Housekeeping',
+    'Lingkungan',
+  ];
+
+  static const Map<String, List<String>> _standardChecklists = {
+    'Penggunaan APD': [
+      'Helm keselamatan (Hard Hat) & tali dagu terpasang kencang',
+      'Sepatu safety boots standar SNI tanpa sobekan/cacat',
+      'Rompi reflektif visibilitas tinggi bersih dan menyala',
+      'Kacamata safety anti debu & radiasi UV saat bekerja',
+      'Masker respirator / partikulat debu P100 di area kerja',
+    ],
+    'Alat Berat': [
+      'Pemeriksaan harian P2H unit dump truck & excavator tuntas',
+      'Klakson, alarm mundur, dan rotary lamp berfungsi normal',
+      'Kaca kabin bersih tanpa retak, wiper berfungsi baik',
+      'Sistem rem darurat (emergency brake) berfungsi pakem',
+      'Tidak ada kebocoran oli hidrolik atau solar di kolong unit',
+    ],
+    'Jalan Angkut': [
+      'Lebar jalan hauling memenuhi standar keselamatan unit',
+      'Tanggul pengaman (safety berm) setinggi 3/4 diameter roda',
+      'Rambu batas kecepatan 25 km/jam terpasang jelas',
+      'Penyiraman debu (water truck) aktif terjadwal',
+      'Drainase jalan bebas genangan air dan lumpur tebal',
+    ],
+    'APAR': [
+      'Tabung APAR tersedia pada setiap kabin alat berat & bengkel',
+      'Jarum indikator tekanan berada di area hijau (aman)',
+      'Segel pin pengaman utuh dan label masa berlaku valid',
+      'Penempatan APAR mudah dijangkau tanpa halangan barang',
+    ],
+    'Housekeeping': [
+      'Penataan perkakas rapi pada tool board / rak bengkel',
+      'Lantai kerja bebas dari ceceran oli dan limbah B3',
+      'Jalur evakuasi dan pintu darurat tidak terhalang barang',
+      'Penyortiran tempat sampah organik, anorganik, dan limbah B3',
+    ],
+    'Lingkungan': [
+      'Kolam pengendapan sedimen (settling pond) terpantau jernih',
+      'Pengelolaan ceceran oli dengan oil spill kit tersedia',
+      'Kadar debu jalan hauling dalam batas baku mutu',
+      'Tingkat kebisingan area crusher di bawah 85 dBA',
+    ],
+  };
+
+  late String _selectedCategory = _categories.first;
+  String _selectedZone = 'Pit Utama (Area Penambangan Aktif)';
+  List<String> _zones = [
+    'Pit Utama (Area Penambangan Aktif)',
+    'Jalan Angkut (Haul Road KM 0 - 15)',
+    'Stockpile & ROM Timbunan',
+    'Workshop & Maintenance Alat Berat',
+    'Fasilitas Pengolahan (Crusher Plant)',
+    'Gudang Logistik & Handak',
+    'Fasilitas Pendukung (Mess & Site Office)',
+  ];
+
+  late final TextEditingController _titleController;
+  final TextEditingController _notesController = TextEditingController();
+
+  // Item pass state: index -> bool (true: Lulus, false: Temuan)
+  final Map<int, bool> _passStates = {};
+  // Finding notes: index -> controller
+  final Map<int, TextEditingController> _findingNotes = {};
+
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final userZone = UserSession.instance.currentUser.value?.workZone;
+    if (userZone != null && userZone.isNotEmpty) {
+      _selectedZone = userZone;
+    }
+    _titleController = TextEditingController(
+      text: 'Inspeksi K3 $_selectedCategory - ${_selectedZone.split(' (').first}',
+    );
+    _initChecklist();
+    _loadZones();
+  }
+
+  Future<void> _loadZones() async {
+    final zones = await ApiService.instance.getMiningZones();
+    if (!mounted || zones.isEmpty) return;
+    setState(() {
+      _zones = zones.map((z) => (z['name'] ?? '').toString()).where((n) => n.isNotEmpty).toList();
+      if (!_zones.contains(_selectedZone) && _zones.isNotEmpty) {
+        _selectedZone = _zones.first;
+        _updateDefaultTitle();
+      }
+    });
+  }
+
+  void _initChecklist() {
+    _passStates.clear();
+    for (final c in _findingNotes.values) {
+      c.dispose();
+    }
+    _findingNotes.clear();
+
+    final items = _standardChecklists[_selectedCategory] ?? const [];
+    for (var i = 0; i < items.length; i++) {
+      _passStates[i] = true; // default all pass
+      _findingNotes[i] = TextEditingController();
+    }
+  }
+
+  void _updateDefaultTitle() {
+    _titleController.text =
+        'Inspeksi K3 $_selectedCategory - ${_selectedZone.split(' (').first}';
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _notesController.dispose();
+    for (final c in _findingNotes.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final title = _titleController.text.trim();
+    if (title.isEmpty) {
+      setState(() => _error = 'Judul inspeksi wajib diisi.');
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    final items = _standardChecklists[_selectedCategory] ?? const [];
+    var passedCount = 0;
+    var failedCount = 0;
+    final findings = <Map<String, dynamic>>[];
+
+    for (var i = 0; i < items.length; i++) {
+      final passed = _passStates[i] ?? true;
+      if (passed) {
+        passedCount++;
+      } else {
+        failedCount++;
+        final note = _findingNotes[i]?.text.trim() ?? '';
+        findings.add({
+          'item': items[i],
+          'note': note.isNotEmpty ? note : 'Ditemukan ketidakpatuhan standar pada item ini.',
+          'severity': 'medium',
+        });
+      }
+    }
+
+    final result = await ApiService.instance.createInspection(
+      category: _selectedCategory,
+      zoneName: _selectedZone,
+      title: title,
+      notes: _notesController.text.trim(),
+      passedItems: passedCount,
+      failedItems: failedCount,
+      findings: findings,
+    );
+
+    if (!mounted) return;
+    setState(() => _submitting = false);
+
+    if (result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppTheme.online,
+          content: Text(
+            failedCount > 0
+                ? 'Inspeksi tersimpan. $failedCount tiket tindakan perbaikan otomatis diterbitkan!'
+                : 'Inspeksi tersimpan. Semua butir dinyatakan LULUS.',
+          ),
+        ),
+      );
+      Navigator.pop(context, true);
+    } else {
+      setState(() => _error = result.error ?? 'Gagal menyimpan inspeksi.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = UserSession.instance.currentUser.value;
+    final items = _standardChecklists[_selectedCategory] ?? const [];
+    final failedCount = _passStates.values.where((p) => !p).length;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Sheet Handle
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppTheme.hairline,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Title Header with Close Button
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: AppTheme.brand.withValues(alpha: 0.1),
+                      borderRadius: AppTheme.brSm,
+                    ),
+                    child: const Icon(Icons.fact_check_rounded, color: AppTheme.brand, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Laporan Inspeksi K3 Baru',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.2,
+                            color: AppTheme.ink,
+                          ),
+                        ),
+                        Text(
+                          'Inspektur: ${user?.fullName ?? "Pengawas"} (${user?.roleDisplayName ?? "HSE"})',
+                          style: const TextStyle(fontSize: 11.5, color: AppTheme.inkMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: AppTheme.ink),
+                    tooltip: 'Tutup',
+                    onPressed: () => Navigator.maybePop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              if (_error != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.riskCriticalBg,
+                    borderRadius: AppTheme.brMd,
+                    border: Border.all(color: AppTheme.riskCritical.withValues(alpha: 0.35)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline_rounded, color: AppTheme.riskCritical, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.riskCritical,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+
+              // 1. Kategori Inspeksi
+              Text('KATEGORI INSPEKSI', style: AppTheme.eyebrow()),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: _categories.map((cat) {
+                  final selected = cat == _selectedCategory;
+                  return GestureDetector(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        _selectedCategory = cat;
+                        _updateDefaultTitle();
+                        _initChecklist();
+                      });
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: selected ? AppTheme.brand : AppTheme.surface,
+                        borderRadius: AppTheme.brSm,
+                        border: Border.all(
+                          color: selected ? AppTheme.brand : AppTheme.hairline,
+                        ),
+                      ),
+                      child: Text(
+                        cat,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                          color: selected ? Colors.white : AppTheme.ink,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+
+              // 2. Zona Kerja
+              Text('ZONA OPERASIONAL TAMBANG', style: AppTheme.eyebrow()),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: _zones.map((zone) {
+                  final shortName = zone.split(' (').first;
+                  final selected = zone == _selectedZone;
+                  return GestureDetector(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        _selectedZone = zone;
+                        _updateDefaultTitle();
+                      });
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: selected ? AppTheme.brand.withValues(alpha: 0.12) : AppTheme.canvas,
+                        borderRadius: AppTheme.brSm,
+                        border: Border.all(
+                          color: selected ? AppTheme.brand : AppTheme.hairline,
+                          width: selected ? 1.6 : 1,
+                        ),
+                      ),
+                      child: Text(
+                        shortName,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                          color: selected ? AppTheme.brand : AppTheme.inkMuted,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+
+              // 3. Judul / Fokus Inspeksi
+              Text('FOKUS / JUDUL INSPEKSI', style: AppTheme.eyebrow()),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _titleController,
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+                decoration: const InputDecoration(
+                  hintText: 'Contoh: Inspeksi Kelayakan APD & Rambu Jalur Hauling',
+                  prefixIcon: Icon(Icons.assignment_outlined, size: 19),
+                ),
+              ),
+              const SizedBox(height: 18),
+
+              // 4. Checklist Items
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('BUTIR PEMERIKSAAN K3', style: AppTheme.eyebrow()),
+                  SbPill(
+                    label: failedCount > 0 ? '$failedCount TEMUAN' : 'SEMUA LULUS',
+                    color: failedCount > 0 ? AppTheme.riskHigh : AppTheme.riskLow,
+                    dense: true,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              SbCard(
+                padding: const EdgeInsets.all(AppTheme.sm),
+                child: Column(
+                  children: List.generate(items.length, (idx) {
+                    final itemText = items[idx];
+                    final isPassed = _passStates[idx] ?? true;
+
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: idx == items.length - 1 ? 0 : 12),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isPassed ? AppTheme.surface : AppTheme.riskHighBg.withValues(alpha: 0.5),
+                          borderRadius: AppTheme.brSm,
+                          border: Border.all(
+                            color: isPassed ? AppTheme.hairline : AppTheme.riskHigh.withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 22,
+                                  height: 22,
+                                  decoration: BoxDecoration(
+                                    color: isPassed ? AppTheme.brand : AppTheme.riskHigh,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    '${idx + 1}',
+                                    style: AppTheme.mono(
+                                      size: 10,
+                                      weight: FontWeight.w800,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    itemText,
+                                    style: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.35,
+                                      color: AppTheme.ink,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                // PASS TOGGLE
+                                GestureDetector(
+                                  onTap: () {
+                                    HapticFeedback.selectionClick();
+                                    setState(() => _passStates[idx] = true);
+                                  },
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 160),
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: isPassed ? AppTheme.riskLow : Colors.transparent,
+                                      borderRadius: AppTheme.brPill,
+                                      border: Border.all(color: AppTheme.riskLow),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.check_rounded,
+                                          size: 14,
+                                          color: isPassed ? Colors.white : AppTheme.riskLow,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'LULUS',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w800,
+                                            color: isPassed ? Colors.white : AppTheme.riskLow,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                // FINDING TOGGLE
+                                GestureDetector(
+                                  onTap: () {
+                                    HapticFeedback.selectionClick();
+                                    setState(() => _passStates[idx] = false);
+                                  },
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 160),
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: !isPassed ? AppTheme.riskHigh : Colors.transparent,
+                                      borderRadius: AppTheme.brPill,
+                                      border: Border.all(color: AppTheme.riskHigh),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.warning_amber_rounded,
+                                          size: 14,
+                                          color: !isPassed ? Colors.white : AppTheme.riskHigh,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'TEMUAN',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w800,
+                                            color: !isPassed ? Colors.white : AppTheme.riskHigh,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (!isPassed) ...[
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _findingNotes[idx],
+                                maxLines: 2,
+                                style: const TextStyle(fontSize: 12),
+                                decoration: InputDecoration(
+                                  isDense: true,
+                                  hintText: 'Deskripsi temuan ketidakpatuhan...',
+                                  hintStyle: const TextStyle(fontSize: 11.5, color: AppTheme.inkFaint),
+                                  filled: true,
+                                  fillColor: Colors.white,
+                                  contentPadding: const EdgeInsets.all(10),
+                                  border: OutlineInputBorder(
+                                    borderRadius: AppTheme.brSm,
+                                    borderSide: const BorderSide(color: AppTheme.riskHigh),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // 5. Catatan Tambahan
+              Text('CATATAN UMUM LAPANGAN (OPSIONAL)', style: AppTheme.eyebrow()),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _notesController,
+                maxLines: 2,
+                style: const TextStyle(fontSize: 13),
+                decoration: const InputDecoration(
+                  hintText: 'Kondisi cuaca saat inspeksi, tim pendamping, dll...',
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Submit Button
+              SbButton(
+                label: failedCount > 0
+                    ? 'Kirim Inspeksi & Terbitkan $failedCount Tindak Lanjut'
+                    : 'Kirim Laporan Inspeksi K3',
+                icon: Icons.send_rounded,
+                loading: _submitting,
+                tone: failedCount > 0 ? AppTheme.riskHigh : AppTheme.brand,
+                onPressed: _submit,
+              ),
+            ],
           ),
         ),
       ),

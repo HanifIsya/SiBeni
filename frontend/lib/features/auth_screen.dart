@@ -406,38 +406,45 @@ class _BrandMark extends StatelessWidget {
     return Column(
       children: [
         Container(
-          width: 68,
-          height: 68,
+          width: 92,
+          height: 92,
           decoration: BoxDecoration(
-            gradient: AppTheme.accentGradient,
-            borderRadius: AppTheme.brLg,
+            borderRadius: BorderRadius.circular(22),
             boxShadow: [
               BoxShadow(
-                color: AppTheme.accent.withValues(alpha: 0.28),
-                blurRadius: 28,
-                offset: const Offset(0, 10),
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
-          child: const Icon(Icons.health_and_safety_rounded, color: Colors.white, size: 36),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Image.asset(
+              'assets/images/logo_launcher.png',
+              width: 92,
+              height: 92,
+              fit: BoxFit.cover,
+            ),
+          ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         const Text(
           AppConfig.appName,
           style: TextStyle(
-            fontSize: 27,
+            fontSize: 26,
             fontWeight: FontWeight.w900,
-            letterSpacing: 3,
+            letterSpacing: 2.5,
             color: Colors.white,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Text(
           AppConfig.appTagline.toUpperCase(),
           style: const TextStyle(
             fontSize: 10.5,
             fontWeight: FontWeight.w700,
-            letterSpacing: 2.4,
+            letterSpacing: 2.2,
             color: AppTheme.accent,
           ),
         ),

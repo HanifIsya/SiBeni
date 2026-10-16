@@ -55,6 +55,106 @@ export async function GET(req: NextRequest) {
 }
 
 /**
+ * POST /api/inspections — conduct and submit a new K3 inspection.
+ *
+ * Authored by Supervisor, HSE, or Management. If the checklist contains any
+ * defects/failed items ("Temuan"), it automatically creates corresponding
+ * corrective action tickets in stage 2 (Temuan) for field follow-up.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const profile = await resolveProfile(req);
+    if (!profile) {
+      return NextResponse.json(
+        { error: "Sesi tidak valid. Silakan masuk kembali." },
+        { status: 401 }
+      );
+    }
+    if (!["supervisor", "hse", "management"].includes(profile.role)) {
+      return NextResponse.json(
+        { error: "Pembuatan laporan inspeksi hanya untuk Supervisor, HSE, atau Manajemen." },
+        { status: 403 }
+      );
+    }
+
+    const body = await req.json();
+    const {
+      inspection_category,
+      zone_name,
+      title,
+      notes,
+      passed_items,
+      failed_items,
+      findings,
+    } = body;
+
+    if (!inspection_category || !zone_name) {
+      return NextResponse.json(
+        { error: "Kategori inspeksi dan zona kerja wajib diisi." },
+        { status: 400 }
+      );
+    }
+
+    const client = getUserClient(req);
+
+    // 1. Insert inspection record
+    const { data: inspection, error: inspError } = await client
+      .from("k3_inspections")
+      .insert({
+        inspector_id: profile.id,
+        inspector_name: profile.full_name,
+        inspection_category,
+        zone_name,
+        title: title || `Inspeksi ${inspection_category} - ${zone_name}`,
+        notes: notes || null,
+        passed_items: Number(passed_items || 0),
+        failed_items: Number(failed_items || 0),
+        inspection_date: new Date().toISOString().slice(0, 10),
+      })
+      .select()
+      .single();
+
+    if (inspError) {
+      return NextResponse.json({ error: inspError.message }, { status: 403 });
+    }
+
+    // 2. If there are findings, generate corrective action tickets automatically
+    const createdActions = [];
+    if (Array.isArray(findings) && findings.length > 0) {
+      for (const finding of findings) {
+        if (!finding || !finding.item) continue;
+        const { data: ca, error: caErr } = await client
+          .from("corrective_actions")
+          .insert({
+            inspection_id: inspection.id,
+            title: `Temuan: ${finding.item}`,
+            description: finding.note || `Temuan pada inspeksi ${inspection_category} di ${zone_name}.`,
+            severity: finding.severity || "medium",
+            status: "identified",
+            stage_number: 2, // Tahap 2: Temuan Bahaya
+            assigned_pic_name: finding.assigned_pic_name || `Pengawas ${zone_name}`,
+            target_due_date: new Date(Date.now() + 3 * 86400 * 1000).toISOString().slice(0, 10),
+            hse_verification_notes: `Ditemukan saat inspeksi lapangan oleh ${profile.full_name} (${profile.role}).`,
+          })
+          .select()
+          .maybeSingle();
+
+        if (!caErr && ca) createdActions.push(ca);
+      }
+    }
+
+    return NextResponse.json({
+      message: "Laporan inspeksi K3 berhasil disimpan.",
+      inspection,
+      created_actions: createdActions,
+      findings_count: createdActions.length,
+    });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+/**
  * PATCH /api/inspections — advance a corrective action one stage.
  *
  * The previous implementation used `.select().single()` against an anonymous

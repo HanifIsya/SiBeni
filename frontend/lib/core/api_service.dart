@@ -110,6 +110,47 @@ class ApiService {
         const {'corrective_actions': <dynamic>[], 'inspections': <dynamic>[]};
   }
 
+  /// Create and submit a new periodic K3 field inspection.
+  Future<ApiResult> createInspection({
+    required String category,
+    required String zoneName,
+    String? title,
+    String? notes,
+    required int passedItems,
+    required int failedItems,
+    required List<Map<String, dynamic>> findings,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse(AppConfig.api('/api/inspections')),
+            headers: _headers,
+            body: jsonEncode({
+              'inspection_category': category,
+              'zone_name': zoneName,
+              if (title != null && title.isNotEmpty) 'title': title,
+              if (notes != null && notes.isNotEmpty) 'notes': notes,
+              'passed_items': passedItems,
+              'failed_items': failedItems,
+              'findings': findings,
+            }),
+          )
+          .timeout(AppConfig.longTimeout);
+
+      final body = _decode(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _invalidate(_kInspections);
+        return ApiResult.ok(
+          body?['message']?.toString() ?? 'Inspeksi K3 berhasil disimpan.',
+          data: body,
+        );
+      }
+      return ApiResult.fail(_messageFor(res.statusCode, body));
+    } catch (e) {
+      return ApiResult.fail(_messageForTransport(e));
+    }
+  }
+
   /// The hazard report register, scoped by RLS to what this role may see.
   Future<({List<Map<String, dynamic>> reports, Map<String, dynamic> counts})>
       getReports({String? status, String? zone}) async {

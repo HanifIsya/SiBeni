@@ -5,7 +5,6 @@ import '../core/auth_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
-import '../widgets/states.dart';
 import '../widgets/sb_button.dart';
 import '../widgets/sb_card.dart';
 
@@ -47,12 +46,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     super.dispose();
   }
 
-  bool get _dirty =>
-      _name.text.trim() != (_user?.fullName ?? '') ||
-      _phone.text.trim() != (_user?.phone ?? '');
-
   Future<void> _pickAvatar() async {
-    setState(() => _uploading = true);
+    setState(() {
+      _uploading = true;
+      _error = null;
+    });
     try {
       final picker = ImagePicker();
       final file = await picker.pickImage(
@@ -77,6 +75,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         _uploading = false;
         if (path != null) {
           _avatarUrl = path;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: AppTheme.online,
+              content: Text('Foto profil berhasil diunggah. Ketuk "Simpan Perubahan" untuk menyimpan.'),
+            ),
+          );
         } else {
           _error = 'Foto tidak dapat diunggah. Periksa koneksi Anda.';
         }
@@ -96,7 +100,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     final name = _name.text.trim();
 
     if (name.length < 3) {
-      setState(() => _error = 'Nama minimal 3 karakter.');
+      setState(() => _error = 'Nama lengkap minimal 3 karakter.');
       return;
     }
 
@@ -119,11 +123,43 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: AppTheme.online,
-          content: Text('Profil berhasil disimpan.'),
+          content: Text('Profil berhasil diperbarui.'),
         ),
       );
     } else {
       setState(() => _error = result.error);
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'Keluar Akun?',
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppTheme.ink),
+        ),
+        content: const Text(
+          'Anda akan keluar dari sesi ini dan kembali ke halaman login.',
+          style: TextStyle(fontSize: 13, height: 1.45, color: AppTheme.inkMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.riskCritical),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Keluar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      if (mounted) Navigator.maybePop(context);
+      await AuthService.instance.signOut();
     }
   }
 
@@ -134,12 +170,43 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     return AdaptivePage(
       maxWidth: 560,
       slivers: [
-        const SectionHeader(
-          title: 'Edit Profil',
-          icon: Icons.badge_rounded,
-          subtitle: 'Data yang ditampilkan kepada rekan tim',
+        // Top Bar Header with clear Back Button
+        Padding(
+          padding: const EdgeInsets.only(bottom: AppTheme.md),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, color: AppTheme.ink),
+                tooltip: 'Kembali',
+                onPressed: () => Navigator.maybePop(context),
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Profil Pengguna',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                        color: AppTheme.ink,
+                      ),
+                    ),
+                    SizedBox(height: 1),
+                    Text(
+                      'Identitas karyawan dan pengaturan akun',
+                      style: TextStyle(fontSize: 12, color: AppTheme.inkMuted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
 
+        // Avatar Card
         SbCard(
           child: Column(
             children: [
@@ -155,7 +222,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         border: Border.all(color: AppTheme.hairline, width: 2),
                       ),
                       clipBehavior: Clip.antiAlias,
-                      child: _avatarUrl != null
+                      child: _avatarUrl != null && _avatarUrl!.isNotEmpty
                           ? Image.network(
                               _avatarUrl!,
                               fit: BoxFit.cover,
@@ -169,11 +236,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       child: GestureDetector(
                         onTap: _uploading ? null : _pickAvatar,
                         child: Container(
-                          width: 34,
-                          height: 34,
+                          width: 36,
+                          height: 36,
                           decoration: const BoxDecoration(
                             color: AppTheme.brand,
                             shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(color: Color(0x33000000), blurRadius: 6, offset: Offset(0, 2)),
+                            ],
                           ),
                           child: _uploading
                               ? const Padding(
@@ -184,7 +254,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                                   ),
                                 )
                               : const Icon(Icons.camera_alt_rounded,
-                                  size: 17, color: Colors.white),
+                                  size: 18, color: Colors.white),
                         ),
                       ),
                     ),
@@ -194,12 +264,30 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               const SizedBox(height: 14),
               GestureDetector(
                 onTap: _uploading ? null : _pickAvatar,
-                child: Text(
-                  'Ubah foto profil',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: _uploading ? AppTheme.inkFaint : AppTheme.brand,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: AppTheme.brand.withValues(alpha: 0.08),
+                    borderRadius: AppTheme.brPill,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.photo_camera_outlined, size: 15, color: AppTheme.brand),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          _uploading ? 'Mengunggah...' : 'Ganti Foto Profil',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.brand,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -213,6 +301,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
           const SizedBox(height: AppTheme.md),
         ],
 
+        // Editable Form
         SbCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -222,19 +311,24 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               TextField(
                 controller: _name,
                 textCapitalization: TextCapitalization.words,
+                onChanged: (_) => setState(() {}),
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                decoration: const InputDecoration(hintText: 'Nama lengkap Anda'),
+                decoration: const InputDecoration(
+                  hintText: 'Nama lengkap Anda',
+                  prefixIcon: Icon(Icons.person_outline_rounded, size: 20),
+                ),
               ),
               const SizedBox(height: 16),
-              Text('Nomor HP', style: AppTheme.eyebrow()),
+              Text('Nomor HP / WhatsApp', style: AppTheme.eyebrow()),
               const SizedBox(height: 8),
               TextField(
                 controller: _phone,
                 keyboardType: TextInputType.phone,
+                onChanged: (_) => setState(() {}),
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 decoration: const InputDecoration(
                   hintText: '+62 812-0000-0000',
-                  prefixIcon: Icon(Icons.phone_outlined, size: 19),
+                  prefixIcon: Icon(Icons.phone_outlined, size: 20),
                 ),
               ),
             ],
@@ -242,7 +336,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         ),
         const SizedBox(height: AppTheme.md),
 
-        // Read-only identity fields: assigned by HSE, not self-editable.
+        // Read-only identity fields
         SbCard(
           padding: const EdgeInsets.all(AppTheme.md),
           child: Column(
@@ -266,7 +360,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Peran dan zona penugasan ditetapkan oleh HSE. Hubungi mereka untuk perubahan.',
+                'Peran dan zona penugasan ditetapkan oleh HSE. Hubungi admin untuk perubahan.',
                 style: TextStyle(
                   fontSize: 11.5,
                   height: 1.45,
@@ -278,12 +372,25 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         ),
 
         const SizedBox(height: AppTheme.xl),
+
+        // Save Button (Always clickable with active state)
         SbButton(
           label: 'Simpan Perubahan',
           icon: Icons.save_rounded,
           loading: _saving,
-          onPressed: (_dirty && !_saving) ? _save : null,
+          onPressed: _saving ? null : _save,
         ),
+
+        const SizedBox(height: AppTheme.md),
+
+        // Logout Button
+        SbButton(
+          label: 'Keluar Akun (Log Out)',
+          icon: Icons.logout_rounded,
+          variant: SbButtonVariant.danger,
+          onPressed: _logout,
+        ),
+        const SizedBox(height: AppTheme.lg),
       ],
     );
   }
@@ -320,15 +427,18 @@ class _ReadOnlyRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
+          flex: 2,
           child: Text(
             label,
             style: const TextStyle(fontSize: 12.5, color: AppTheme.inkMuted),
           ),
         ),
-        Flexible(
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 3,
           child: Text(
             value,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.right,
             style: const TextStyle(

@@ -43,24 +43,41 @@ class _Sheet extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.3,
-                  color: AppTheme.ink,
-                ),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
+                            color: AppTheme.ink,
+                          ),
+                        ),
+                        if (subtitle != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            subtitle!,
+                            style: const TextStyle(fontSize: 12.5, height: 1.4, color: AppTheme.inkMuted),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: AppTheme.ink),
+                    tooltip: 'Tutup',
+                    onPressed: () => Navigator.maybePop(context),
+                  ),
+                ],
               ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  subtitle!,
-                  style: const TextStyle(fontSize: 12.5, height: 1.4, color: AppTheme.inkMuted),
-                ),
-              ],
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               child,
             ],
           ),
@@ -387,7 +404,7 @@ class _SettingsSheet extends StatelessWidget {
                     _Row(
                       icon: Icons.info_outline_rounded,
                       label: 'Versi aplikasi',
-                      value: '1.2.0',
+                      value: '1.3.0',
                     ),
                     _Divider(),
                     _Row(
@@ -398,7 +415,34 @@ class _SettingsSheet extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 14),
+              SbButton(
+                label: 'Keluar Akun (Log Out)',
+                icon: Icons.logout_rounded,
+                variant: SbButtonVariant.danger,
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Keluar Akun?'),
+                      content: const Text('Anda akan keluar dari sesi ini dan kembali ke halaman login.'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+                        FilledButton(
+                          style: FilledButton.styleFrom(backgroundColor: AppTheme.riskCritical),
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Keluar'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    if (context.mounted) Navigator.maybePop(context);
+                    await AuthService.instance.signOut();
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
               Text(
                 'SI BENI — ${AppConfig.appTagline}',
                 textAlign: TextAlign.center,

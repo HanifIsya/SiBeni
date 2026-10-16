@@ -1,25 +1,26 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'app_config.dart';
 import 'user_session.dart';
 
+/// Authentication gateway.
+///
+/// The Supabase project is the identity authority; the app never stores or
+/// invents credentials, and role assignment stays server-side.
 class AuthService {
-  static final AuthService _instance = AuthService._internal();
-  factory AuthService() => _instance;
   AuthService._internal();
 
-  static const String supabaseUrl = 'https://qgdnrsnbxwqrouigrskb.supabase.co';
-  static const String supabaseAnonKey =
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnZG5yc25ieHdxcm91aWdyc2tiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU4MjUsImV4cCI6MjEwNzcxMTgyNX0.GidEFVlR4sRH4babQ7sIGRDmNrWRYCOtQ5s_rXvqOH8';
+  static final AuthService instance = AuthService._internal();
 
   SupabaseClient get client => Supabase.instance.client;
 
   Future<void> initialize() async {
     await Supabase.initialize(
-      url: supabaseUrl,
-      anonKey: supabaseAnonKey,
+      url: AppConfig.supabaseUrl,
+      publishableKey: AppConfig.supabaseAnonKey,
     );
 
-    // Check existing session
     final session = client.auth.currentSession;
     if (session != null) {
       await loadUserProfile(session.user.id);
@@ -36,20 +37,20 @@ class AuthService {
 
       if (res != null) {
         final profile = UserProfile(
-          employeeId: res['employee_id'] ?? 'EMP-001',
-          fullName: res['full_name'] ?? 'Karyawan Tambang',
+          employeeId: res['employee_id'] as String? ?? '—',
+          fullName: res['full_name'] as String? ?? 'Karyawan Tambang',
           role: AppRole.values.firstWhere(
             (r) => r.name == res['role'],
             orElse: () => AppRole.worker,
           ),
-          workZone: res['work_zone'] ?? 'Pit Utama (Area Penambangan Aktif)',
-          phone: res['phone_number'] ?? '+62 812-3456-7890',
+          workZone: res['work_zone'] as String? ?? 'Pit Utama',
+          phone: res['phone_number'] as String?,
         );
-        await UserSession().login(profile);
+        await UserSession.instance.login(profile);
         return profile;
       }
     } catch (e) {
-      debugPrint('Error loading user profile: $e');
+      debugPrint('loadUserProfile failed: $e');
     }
     return null;
   }
@@ -62,11 +63,9 @@ class AuthService {
       email: email.trim(),
       password: password,
     );
-
     if (response.user != null) {
       await loadUserProfile(response.user!.id);
     }
-
     return response;
   }
 
@@ -74,7 +73,7 @@ class AuthService {
     required String email,
     required String password,
     required String fullName,
-    required String employeeId,
+    String? employeeId,
     required AppRole role,
     required String workZone,
   }) async {
@@ -83,23 +82,23 @@ class AuthService {
       password: password,
       data: {
         'full_name': fullName.trim(),
-        'employee_id': employeeId.trim(),
+        'employee_id': employeeId?.trim(),
         'role': role.name,
         'work_zone': workZone,
       },
     );
-
     if (response.user != null) {
       await loadUserProfile(response.user!.id);
     }
-
     return response;
   }
 
   Future<void> signOut() async {
     try {
       await client.auth.signOut();
-    } catch (_) {}
-    await UserSession().logout();
+    } catch (_) {
+      // Signing out locally must always succeed, even without a network.
+    }
+    await UserSession.instance.logout();
   }
 }

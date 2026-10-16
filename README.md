@@ -14,7 +14,7 @@
 
 - 📖 **[Product Requirements Document (PRD.md)](./PRD.md)**: Spesifikasi mendalam mengenai visi produk, dekonstruksi akar masalah (Fishbone 6M), use case diagram, spesifikasi fungsional 5 modul utama, skema basis data, dan metrik keberhasilan K3.
 - 🗺️ **[Implementation Plan & Roadmap (IMPLEMENTATION_PLAN.md)](./IMPLEMENTATION_PLAN.md)**: Rencana aksi terstruktur per fase, arsitektur monorepo, panduan integrasi MCP (Supabase, Render, Google Stitch), serta matriks verifikasi.
-- 🎨 **[Design System (DESIGN.md)](./DESIGN.md)**: Sistem desain industri tangguh (*Rugged Industrial UI*), rasio kontras tinggi di bawah sinar terik matahari, taksonomi 4 tingkat risiko warna K3, ergonomi sarung tangan (target sentuh 52px, tombol SOS 64px), dan cetak biru layar (M-01 s/d M-05 & W-01).
+- 🎨 **[Design System (DESIGN.md)](./DESIGN.md)**: Sistem desain v3.0 — taksonomi 4 tingkat risiko K3, tipografi ganda (*Plus Jakarta Sans* untuk antarmuka, *JetBrains Mono* untuk telemetri), skala spasi/radius/elevasi, token gerak & getaran, aturan responsif (NavigationBar → NavigationRail), dan cetak biru layar (M-01 s/d M-05).
 
 ---
 
@@ -59,27 +59,23 @@
    - Peringatan dini resmi dari BMKG & BNPB untuk mitigasi cuaca ekstrem, tanah longsor, dan banjir.
 
 2. **Lapor Cepat Bahaya & Near Miss — Offline-First (Screen M-02)**
-   - Slogan: *"Lapor Hari Ini, Cegah Kecelakaan Esok Hari"*.
-   - Alur tunggal terstruktur dalam tempo < 30 detik: pemilih tipe insiden (*Bahaya* vs *Near Miss*), tagging koordinat GPS & zona otomatis, kategori bahaya, kamera kompresi instan, dan input deskripsi / suara.
-   - **Mode Offline**: Laporan disimpan lokal di SQLite/Hive dan disinkronisasikan secara otomatis saat terhubung kembali ke jaringan (*auto-sync*).
+   - Alur tunggal terstruktur dalam tempo < 30 detik: pemilih tipe insiden (*Bahaya* vs *Near Miss*), koordinat GNSS **riel perangkat** + zona otomatis, kategori bahaya, dan input deskripsi.
+   - **Mode Offline**: laporan ditulis ke penyimpanan lokal *sebelum* mencoba dikirim (*write-first*), lalu dikirim ulang otomatis item-per-item ketika jaringan pulih — tanpa kehilangan data.
+   - **Paket data didukung**: kebijakan jaringan dikendalikan pengguna (*Izinkan Data Seluler*, aktif secara bawaan). Status `Online · Wi-Fi` / `Online · Seluler` / `Wi-Fi Saja` / `Terputus` / `Offline` selalu terlihat di bilah atas.
 
 3. **Tanggap Darurat, SOS 3 Detik & Peta Evakuasi (Screen M-03)**
-   - **Tombol Darurat (SOS)** tinggi 64px dengan gestur tekan-tahan 3 detik (*Long-Press 3s*) untuk menghindari kepencet di jalan tambang.
+   - **Tombol Darurat (SOS)** radial 190px dengan gestur tekan-tahan 3 detik (*Long-Press 3s*) untuk menghindari kepencet di jalan tambang.
    - 5 Filter Keadaan Darurat (*Kebakaran, Cedera, B3, Longsor/Banjir, Keamanan*).
-   - Jalur evakuasi digital ke *Assembly Point* terdekat, 4 prinsip darurat, dan *stepper* 6 langkah evakuasi.
+   - Jalur evakuasi digital ke *Assembly Point* terdekat dengan **jarak terukur** dari posisi GNSS pengguna, 4 prinsip darurat, dan *stepper* 6 langkah evakuasi.
 
 4. **Inspeksi K3 & Corrective Action (Screen M-04)**
    - Checklist digital berkala: *APD, Alat Berat, Jalan Angkut, APAR, Housekeeping, Lingkungan*.
    - Alur 6 Tahap Tindak Lanjut (*Inspection → Identified → Verified → Assigned → In Progress → Closed*).
 
 5. **Dashboard K3, Energi & Emisi Karbon (Screen M-05 & W-01)**
-   - 5 KPI Teratas:
-     - Total Jam Kerja Aman (*Safe Man-Hours*): `1.247.652 jam`
-     - TRIR (*Total Recordable Incident Rate*): `0,48`
-     - Konsumsi Energi Total: `24.785 GJ`
-     - Intensitas Energi: `2,41 GJ/ton`
-     - Emisi Karbon Total: `12.456 ton CO₂e`
-   - Grafik tren insiden bulanan, diagram sumber energi (Listrik 45%, Gas Alam 25%, BBM 15%, Lainnya 15%), dan progres dekarbonisasi.
+   - 4 KPI utama + panel hero emisi karbon: *Safe Man-Hours*, **TRIR**, **Konsumsi Energi**, **Intensitas Energi**, **Emisi CO₂e**.
+   - Komposisi energi per sumber dengan bar animasi, dan periode pelaporan dari database.
+   - **Tanpa angka hardcoded**: bila server belum mengembalikan nilai, kartu menampilkan `—` — sistem keselamatan tidak pernah menampilkan angka karangan.
 
 ---
 
@@ -96,8 +92,26 @@
 2. Jalankan skrip migrasi berurutan:
    - `supabase/migrations/001_initial_schema.sql`
    - `supabase/migrations/002_rls_and_policies.sql`
+   - `supabase/migrations/003_zone_geometry.sql` — memindahkan geometri zona (pusat, poligon, titik kumpul) dari kode klien ke database.
 3. Masukkan data awal dengan menjalankan:
    - `supabase/seed.sql`
+
+### Menjalankan Aplikasi & Membuat Rilis
+
+```bash
+cd frontend
+flutter pub get
+flutter analyze                 # harus: No issues found!
+flutter test                    # 53 uji: tata letak + logika inti
+flutter build apk --release
+# → build/app/outputs/flutter-apk/app-release.apk
+```
+
+Penandatanganan rilis memakai keystore `android/sibeni-release.jks` yang
+dikonfigurasi lewat `android/key.properties`. Keduanya **tidak** masuk version
+control (`android/.gitignore`) — di CI, kedua berkas itu di-inject dari secret
+store sebelum build. Tanpa berkas tersebut, build otomatis jatuh ke *debug key*
+agar checkout baru tetap menghasilkan APK yang bisa dijalankan.
 
 ---
 

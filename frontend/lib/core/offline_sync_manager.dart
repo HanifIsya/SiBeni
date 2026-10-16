@@ -1,80 +1,135 @@
+import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
 
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_service.dart';
+import 'app_config.dart';
+import 'network_service.dart';
+
+/// ---------------------------------------------------------------------------
+/// OfflineSyncManager
+///
+/// Durable, zero-loss outbox for hazard / near-miss reports.
+///
+/// Reports are always written to disk first, then flushed. That ordering is
+/// what guarantees nothing is lost when a worker loses signal mid-submission.
+/// The flush gate is [NetworkService], which already understands the user's
+/// Wi-Fi-only vs cellular-allowed preference.
+/// ---------------------------------------------------------------------------
 class OfflineSyncManager {
-  static final OfflineSyncManager _instance = OfflineSyncManager._internal();
-  factory OfflineSyncManager() => _instance;
   OfflineSyncManager._internal();
 
-  final ValueNotifier<bool> isOnline = ValueNotifier<bool>(true);
+  static final OfflineSyncManager instance = OfflineSyncManager._internal();
+
   final ValueNotifier<int> queueCount = ValueNotifier<int>(0);
   final ValueNotifier<bool> isSyncing = ValueNotifier<bool>(false);
+  final ValueNotifier<DateTime?> lastSyncedAt = ValueNotifier<DateTime?>(null);
+  final ValueNotifier<String?> lastError = ValueNotifier<String?>(null);
 
   static const String _queueKey = 'sibeni_offline_queue';
-  String backendApiUrl = 'https://sibeni-backend.onrender.com/api/reports';
+  static const int _maxAttempts = 5;
 
-  Future<void> initialize() async {
-    await _updateQueueCount();
-
-    // Listen to network changes
-    Connectivity().onConnectivityChanged.listen((results) {
-      final hasConnection = !results.contains(ConnectivityResult.none);
-      isOnline.value = hasConnection;
-      if (hasConnection && queueCount.value > 0) {
-        syncQueuedReports();
-      }
-    });
-
-    // Check initial connectivity
-    final initialResults = await Connectivity().checkConnectivity();
-    isOnline.value = !initialResults.contains(ConnectivityResult.none);
+  void initialize() {
+    NetworkService.instance.state.addListener(_onNetworkChanged);
   }
 
-  Future<void> _updateQueueCount() async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueList = prefs.getStringList(_queueKey) ?? [];
-    queueCount.value = queueList.length;
-  }
-
-  Future<void> enqueueReport(Map<String, dynamic> reportData) async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueList = prefs.getStringList(_queueKey) ?? [];
-    queueList.add(jsonEncode(reportData));
-    await prefs.setStringList(_queueKey, queueList);
-    await _updateQueueCount();
-
-    if (isOnline.value) {
-      await syncQueuedReports();
+  void _onNetworkChanged() {
+    if (NetworkService.instance.isOnline) {
+      unawaited(syncQueuedReports());
     }
   }
 
-  Future<void> syncQueuedReports() async {
-    if (isSyncing.value) return;
+  Future<void> refreshQueueCount() async {
+    queueCount.value = (await _readQueue()).length;
+  }
+
+  /// Persist a report and attempt immediate delivery.
+  /// Returns `true` when it reached the server during this call.
+  ///
+  /// The interactive flush is deliberately short (one retry) so the submit
+  /// button never appears hung while a flaky link is being probed. The
+  /// background flush retries harder and runs when connectivity returns.
+  Future<bool> enqueueReport(Map<String, dynamic> reportData) async {
+    final queue = await _readQueue();
+    queue.add(jsonEncode(reportData));
     final prefs = await SharedPreferences.getInstance();
-    final queueList = prefs.getStringList(_queueKey) ?? [];
-    if (queueList.isEmpty) return;
+    await prefs.setStringList(_queueKey, queue);
+    queueCount.value = queue.length;
+
+    await syncQueuedReports(attempts: 2);
+    return queueCount.value == 0;
+  }
+
+  /// Flush the outbox. Returns `true` when the queue is empty afterwards.
+  Future<bool> syncQueuedReports({int attempts = _maxAttempts}) async {
+    if (isSyncing.value) return queueCount.value == 0;
+    if (!NetworkService.instance.isOnline) return false;
+
+    final queue = await _readQueue();
+    if (queue.isEmpty) {
+      queueCount.value = 0;
+      return true;
+    }
 
     isSyncing.value = true;
+    lastError.value = null;
     try {
-      final reports = queueList.map((e) => jsonDecode(e)).toList();
-      final response = await http.post(
-        Uri.parse(backendApiUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(reports),
-      ).timeout(const Duration(seconds: 10));
+      final pending = queue
+          .map((e) => jsonDecode(e))
+          .whereType<Map<String, dynamic>>()
+          .toList();
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        // Successfully synced
-        await prefs.remove(_queueKey);
-        await _updateQueueCount();
+      final accepted = <Map<String, dynamic>>[];
+      for (final report in pending) {
+        final ok = await _deliver(report, attempts);
+        if (ok) {
+          accepted.add(report);
+        } else {
+          // Network flaked on this one item: stop, keep the rest queued.
+          break;
+        }
       }
+
+      if (accepted.isNotEmpty) {
+        final remaining = queue
+            .where((raw) {
+              final decoded = jsonDecode(raw) as Map<String, dynamic>;
+              return !accepted.any((a) => a['local_id'] == decoded['local_id']);
+            })
+            .toList();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setStringList(_queueKey, remaining);
+        queueCount.value = remaining.length;
+        lastSyncedAt.value = DateTime.now();
+      }
+      return queueCount.value == 0;
     } catch (e) {
-      debugPrint('Sync deferred due to connection: $e');
+      lastError.value = 'Sinkronisasi tertunda';
+      debugPrint('syncQueuedReports failed: $e');
+      return false;
     } finally {
       isSyncing.value = false;
     }
+  }
+
+  Future<bool> _deliver(Map<String, dynamic> report, int attempts) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      final ok = await ApiService.instance
+          .queueReport(report)
+          .timeout(AppConfig.shortTimeout, onTimeout: () => false);
+      if (ok) return true;
+      if (!NetworkService.instance.isOnline) return false;
+      if (attempt < attempts - 1) {
+        await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      }
+    }
+    return false;
+  }
+
+  Future<List<String>> _readQueue() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_queueKey) ?? [];
   }
 }

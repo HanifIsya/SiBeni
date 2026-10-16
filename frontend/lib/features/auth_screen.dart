@@ -1,452 +1,542 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
+
+import '../core/app_config.dart';
+import '../core/auth_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
-import '../core/auth_service.dart';
+import '../widgets/adaptive_page.dart';
+import '../widgets/sb_button.dart';
+import '../widgets/sb_card.dart';
+import '../widgets/states.dart';
+
+/// A role chip used both for sign-up selection and demo-account hints.
+class _RoleOption {
+  const _RoleOption(this.role, this.label, this.icon);
+  final AppRole role;
+  final String label;
+  final IconData icon;
+}
 
 class AuthScreen extends StatefulWidget {
-  final VoidCallback onAuthSuccess;
-  const AuthScreen({super.key, required this.onAuthSuccess});
+  const AuthScreen({super.key});
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  bool _isLoginMode = true;
-  bool _isLoading = false;
-  bool _obscurePassword = true;
-  String? _errorMessage;
+  bool _isLogin = true;
+  bool _loading = false;
+  bool _obscure = true;
+  String? _error;
 
-  final _emailController = TextEditingController(text: 'pekerja@consnetmining.com');
-  final _passwordController = TextEditingController(text: 'Consnet123!');
-  final _fullNameController = TextEditingController();
-  final _employeeIdController = TextEditingController();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _fullName = TextEditingController();
+  final _employeeId = TextEditingController();
 
-  AppRole _selectedRole = AppRole.worker;
-  String _selectedZone = 'Pit Utama (Area Penambangan Aktif)';
+  AppRole _role = AppRole.worker;
+  String _zone = 'Pit Utama';
 
-  final List<String> _zones = [
-    'Pit Utama (Area Penambangan Aktif)',
-    'Jalan Angkut (Haul Road KM 0-15)',
-    'Stockpile & ROM Timbunan',
-    'Workshop & Maintenance Alat Berat',
-    'Fasilitas Pengolahan (Crusher Plant)',
-    'Gudang Logistik & Handak',
-    'Fasilitas Pendukung (Site Office)',
+  static const _roles = [
+    _RoleOption(AppRole.worker, 'Pekerja', Icons.construction_rounded),
+    _RoleOption(AppRole.supervisor, 'Supervisor', Icons.supervised_user_circle_rounded),
+    _RoleOption(AppRole.hse, 'HSE', Icons.health_and_safety_rounded),
+    _RoleOption(AppRole.management, 'Manajemen', Icons.business_center_rounded),
   ];
 
-  Future<void> _submitAuth() async {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
+  static const _zones = [
+    'Pit Utama',
+    'Jalan Angkut',
+    'Stockpile & ROM',
+    'Workshop',
+    'Crusher Plant',
+    'Gudang Logistik',
+    'Fasilitas Pendukung',
+  ];
 
-    if (email.isEmpty || !email.contains('@')) {
-      setState(() => _errorMessage = 'Silakan masukkan alamat email yang valid.');
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    _fullName.dispose();
+    _employeeId.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    FocusScope.of(context).unfocus();
+    final email = _email.text.trim();
+    final password = _password.text;
+
+    if (!email.contains('@')) {
+      setState(() => _error = 'Masukkan alamat email yang valid.');
       return;
     }
     if (password.length < 6) {
-      setState(() => _errorMessage = 'Kata sandi minimal 6 karakter.');
+      setState(() => _error = 'Kata sandi minimal 6 karakter.');
       return;
     }
 
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _loading = true;
+      _error = null;
     });
 
     try {
-      if (_isLoginMode) {
-        // Real Supabase Auth Login
-        final res = await AuthService().signIn(email: email, password: password);
-        if (res.user != null) {
-          widget.onAuthSuccess();
-        } else {
-          setState(() => _errorMessage = 'Email atau kata sandi tidak cocok.');
+      if (_isLogin) {
+        final res = await AuthService.instance.signIn(email: email, password: password);
+        if (res.user == null) {
+          setState(() => _error = 'Email atau kata sandi tidak cocok.');
         }
       } else {
-        // Real Supabase Auth Registration
-        if (_fullNameController.text.trim().isEmpty) {
+        if (_fullName.text.trim().isEmpty) {
           setState(() {
-            _isLoading = false;
-            _errorMessage = 'Nama lengkap wajib diisi.';
+            _loading = false;
+            _error = 'Nama lengkap wajib diisi.';
           });
           return;
         }
-
-        final res = await AuthService().signUp(
+        final res = await AuthService.instance.signUp(
           email: email,
           password: password,
-          fullName: _fullNameController.text.trim(),
-          employeeId: _employeeIdController.text.trim().isEmpty
-              ? 'EMP-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}'
-              : _employeeIdController.text.trim(),
-          role: _selectedRole,
-          workZone: _selectedZone,
+          fullName: _fullName.text.trim(),
+          employeeId: _employeeId.text.trim().isEmpty ? null : _employeeId.text.trim(),
+          role: _role,
+          workZone: _zone,
         );
-
-        if (res.user != null) {
-          widget.onAuthSuccess();
-        } else {
-          setState(() => _errorMessage = 'Pendaftaran gagal. Silakan periksa koneksi atau gunakan email lain.');
+        if (res.user == null) {
+          setState(() => _error = 'Pendaftaran gagal. Periksa email atau hubungi HSE.');
         }
       }
     } catch (e) {
-      setState(() => _errorMessage = 'Autentikasi gagal: ${e.toString().replaceAll('AuthException:', '').trim()}');
+      setState(() {
+        _error = _friendlyError(e);
+      });
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _autofillAccount(String email, String roleName) {
-    setState(() {
-      _isLoginMode = true;
-      _emailController.text = email;
-      _passwordController.text = 'Consnet123!';
-      _errorMessage = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Akun $roleName telah diisi otomatis. Ketuk "MASUK KE SISTEM K3"')),
-    );
+  String _friendlyError(Object e) {
+    final raw = e.toString();
+    if (raw.contains('Invalid login credentials')) {
+      return 'Email atau kata sandi tidak cocok.';
+    }
+    if (raw.contains('User already registered')) {
+      return 'Email ini sudah terdaftar. Silakan masuk.';
+    }
+    if (raw.contains('Email not confirmed')) {
+      return 'Email belum dikonfirmasi oleh admin HSE.';
+    }
+    if (raw.contains('SocketException') || raw.contains('Failed host lookup')) {
+      return 'Tidak ada koneksi ke server. Periksa jaringan Anda.';
+    }
+    return 'Autentikasi gagal. Silakan coba lagi.';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.surfaceBg,
+      backgroundColor: AppTheme.brandDeep,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 10),
+        child: AdaptivePage(
+          maxWidth: 520,
+          slivers: [
+            const SizedBox(height: 18),
+            const _BrandMark(),
+            const SizedBox(height: 26),
 
-              // Enterprise Industrial Brand Header
-              Center(
-                child: Column(
-                  children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        color: AppTheme.brandPrimary,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [
-                          BoxShadow(color: Color(0x330F4C81), blurRadius: 16, offset: Offset(0, 6)),
-                        ],
-                      ),
-                      child: const Icon(Icons.shield, color: AppTheme.brandSecondary, size: 36),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'SI BENI',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        color: AppTheme.brandPrimary,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    Text(
-                      'Siaga Bencana Dini • PT Consnet Mining',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.onSurfaceSecondary,
-                      ),
-                    ),
-                  ],
-                ),
+            // Sign-in / sign-up switch
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.10),
+                borderRadius: AppTheme.brMd,
               ),
-              const SizedBox(height: 24),
-
-              // Segmented Tab Switcher (Masuk vs Daftar)
-              Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceMuted,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.borderSubtle),
-                ),
-                padding: const EdgeInsets.all(4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() {
-                          _isLoginMode = true;
-                          _errorMessage = null;
-                        }),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          decoration: BoxDecoration(
-                            color: _isLoginMode ? Colors.white : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: _isLoginMode ? const [BoxShadow(color: Colors.black12, blurRadius: 4)] : null,
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Masuk Akun',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: _isLoginMode ? AppTheme.brandPrimary : AppTheme.onSurfaceSecondary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() {
-                          _isLoginMode = false;
-                          _errorMessage = null;
-                        }),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          decoration: BoxDecoration(
-                            color: !_isLoginMode ? Colors.white : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: !_isLoginMode ? const [BoxShadow(color: Colors.black12, blurRadius: 4)] : null,
-                          ),
-                          child: Center(
-                            child: Text(
-                              'Daftar Baru',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: !_isLoginMode ? AppTheme.brandPrimary : AppTheme.onSurfaceSecondary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+              child: Row(
+                children: [
+                  _SwitchTab(
+                    label: 'Masuk',
+                    selected: _isLogin,
+                    onTap: () => setState(() {
+                      _isLogin = true;
+                      _error = null;
+                    }),
+                  ),
+                  _SwitchTab(
+                    label: 'Daftar',
+                    selected: !_isLogin,
+                    onTap: () => setState(() {
+                      _isLogin = false;
+                      _error = null;
+                    }),
+                  ),
+                ],
               ),
-              const SizedBox(height: 20),
+            ),
+            const SizedBox(height: 20),
 
-              // Error Message Banner
-              if (_errorMessage != null)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppTheme.riskCriticalBg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppTheme.riskCritical),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.error_outline, color: AppTheme.riskCritical, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _errorMessage!,
-                          style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.riskCritical),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            if (_error != null) ...[
+              _ErrorBanner(message: _error!),
+              const SizedBox(height: 14),
+            ],
 
-              // Form Input Fields
-              if (!_isLoginMode) ...[
-                Text('Nama Lengkap Karyawan', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _fullNameController,
-                  decoration: InputDecoration(
-                    hintText: 'Contoh: Ahmad Rizky',
-                    prefixIcon: const Icon(Icons.person_outline, size: 20),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                Text('NRP / NIK Karyawan', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _employeeIdController,
-                  decoration: InputDecoration(
-                    hintText: 'Contoh: OP-501',
-                    prefixIcon: const Icon(Icons.badge_outlined, size: 20),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                Text('Peran K3 (Role)', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: AppRole.values.map((role) {
-                    final isSelected = _selectedRole == role;
-                    return ChoiceChip(
-                      label: Text(role.name.toUpperCase()),
-                      selected: isSelected,
-                      onSelected: (val) => setState(() => _selectedRole = role),
-                      selectedColor: AppTheme.brandPrimary,
-                      labelStyle: GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: isSelected ? Colors.white : AppTheme.onSurfacePrimary,
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 12),
-
-                Text('Zona Penugasan Tambang', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedZone,
-                  isExpanded: true,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.location_on_outlined, size: 20),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
-                  ),
-                  items: _zones.map((z) => DropdownMenuItem(value: z, child: Text(z, style: GoogleFonts.plusJakartaSans(fontSize: 12), overflow: TextOverflow.ellipsis))).toList(),
-                  onChanged: (val) {
-                    if (val != null) setState(() => _selectedZone = val);
-                  },
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              Text('Alamat Email Perusahaan', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: InputDecoration(
-                  hintText: 'nama@consnetmining.com',
-                  prefixIcon: const Icon(Icons.mail_outline, size: 20),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              Text('Kata Sandi', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _passwordController,
-                obscureText: _obscurePassword,
-                decoration: InputDecoration(
-                  hintText: 'Minimal 6 karakter',
-                  prefixIcon: const Icon(Icons.lock_outline, size: 20),
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, size: 20),
-                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.borderSubtle)),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Main Action Button (min 52px target)
-              SizedBox(
-                width: double.infinity,
-                height: AppTheme.minTouchTarget,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _submitAuth,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.brandPrimary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                      : Text(
-                          _isLoginMode ? 'MASUK KE SISTEM K3' : 'DAFTAR SEBAGAI KARYAWAN',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 0.5),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Expandable Quick Test Credentials Guide
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.borderSubtle),
-                ),
+            if (!_isLogin) ...[
+              SbCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.vpn_key_outlined, size: 16, color: AppTheme.brandPrimary),
-                        const SizedBox(width: 6),
-                        Text(
-                          'AKUN RESMI PERUSAHAAN (SUPABASE AUTH)',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.brandPrimary),
-                        ),
-                      ],
+                    const SectionHeader(
+                      title: 'Identitas Pekerja',
+                      dense: true,
                     ),
+                    _Field(
+                      controller: _fullName,
+                      label: 'Nama lengkap',
+                      icon: Icons.person_outline_rounded,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 12),
+                    _Field(
+                      controller: _employeeId,
+                      label: 'Nomor pegawai',
+                      icon: Icons.badge_outlined,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 16),
+                    Text('Peran', style: Theme.of(context).textTheme.titleSmall),
                     const SizedBox(height: 8),
-                    Text(
-                      'Ketuk salah satu akun untuk mengisi otomatis kredensial aktif:',
-                      style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _roles.map((r) {
+                        final selected = r.role == _role;
+                        return GestureDetector(
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _role = r.role);
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? AppTheme.brand.withValues(alpha: 0.10)
+                                  : AppTheme.canvas,
+                              borderRadius: AppTheme.brSm,
+                              border: Border.all(
+                                color: selected ? AppTheme.brand : AppTheme.hairline,
+                                width: selected ? 1.6 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  r.icon,
+                                  size: 15,
+                                  color: selected ? AppTheme.brand : AppTheme.inkFaint,
+                                ),
+                                const SizedBox(width: 7),
+                                Text(
+                                  r.label,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                                    color: selected ? AppTheme.brand : AppTheme.inkMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
                     ),
-                    const SizedBox(height: 10),
-                    _buildAccountChip('Pekerja / Operator', 'pekerja@consnetmining.com', Icons.construction),
-                    _buildAccountChip('Supervisor', 'supervisor@consnetmining.com', Icons.supervised_user_circle),
-                    _buildAccountChip('Tim HSE', 'hse@consnetmining.com', Icons.health_and_safety),
-                    _buildAccountChip('Manajemen', 'manajemen@consnetmining.com', Icons.business_center),
+                    const SizedBox(height: 16),
+                    Text('Zona penugasan', style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _zones.map((z) {
+                        final selected = z == _zone;
+                        return GestureDetector(
+                          onTap: () => setState(() => _zone = z),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                            decoration: BoxDecoration(
+                              color: selected ? AppTheme.brand : AppTheme.canvas,
+                              borderRadius: AppTheme.brSm,
+                              border: Border.all(
+                                color: selected ? AppTheme.brand : AppTheme.hairline,
+                              ),
+                            ),
+                            child: Text(
+                              z,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                                color: selected ? Colors.white : AppTheme.inkMuted,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 14),
             ],
+
+            SbCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SectionHeader(title: 'Akses Akun', dense: true),
+                  _Field(
+                    controller: _email,
+                    label: 'Email perusahaan',
+                    icon: Icons.mail_outline_rounded,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 12),
+                  _Field(
+                    controller: _password,
+                    label: 'Kata sandi',
+                    icon: Icons.lock_outline_rounded,
+                    obscure: _obscure,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _submit(),
+                    suffix: IconButton(
+                      icon: Icon(
+                        _obscure ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                        size: 19,
+                        color: AppTheme.inkFaint,
+                      ),
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            SbButton(
+              label: _isLogin ? 'Masuk' : 'Buat Akun',
+              loading: _loading,
+              icon: _isLogin ? Icons.login_rounded : Icons.person_add_alt_1_rounded,
+              onPressed: _submit,
+            ),
+            const SizedBox(height: 22),
+
+            const _SecurityNote(),
+            const SizedBox(height: 18),
+            Center(
+              child: Text(
+                '${AppConfig.appName} · ${AppConfig.appTagline}\n${AppConfig.organisation}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 11,
+                  height: 1.6,
+                  color: Color(0xFF7E97AC),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+class _BrandMark extends StatelessWidget {
+  const _BrandMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          width: 68,
+          height: 68,
+          decoration: BoxDecoration(
+            gradient: AppTheme.accentGradient,
+            borderRadius: AppTheme.brLg,
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.accent.withValues(alpha: 0.28),
+                blurRadius: 28,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.health_and_safety_rounded, color: Colors.white, size: 36),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          AppConfig.appName,
+          style: TextStyle(
+            fontSize: 27,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 3,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          AppConfig.appTagline.toUpperCase(),
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 2.4,
+            color: AppTheme.accent,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SwitchTab extends StatelessWidget {
+  const _SwitchTab({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          height: 46,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: AppTheme.brSm,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+              color: selected ? AppTheme.brandDeep : const Color(0xFF9FB6C8),
+            ),
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildAccountChip(String role, String email, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6.0),
-      child: InkWell(
-        onTap: () => _autofillAccount(email, role),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceMuted,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppTheme.borderSubtle),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, size: 16, color: AppTheme.brandPrimary),
-                  const SizedBox(width: 8),
-                  Text(role, style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-                ],
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    this.keyboardType,
+    this.obscure = false,
+    this.suffix,
+    this.textInputAction,
+    this.onSubmitted,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final TextInputType? keyboardType;
+  final bool obscure;
+  final Widget? suffix;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      obscureText: obscure,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      onSubmitted: onSubmitted,
+      style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppTheme.ink),
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, size: 19, color: AppTheme.inkFaint),
+        suffixIcon: suffix,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.riskCriticalBg,
+        borderRadius: AppTheme.brMd,
+        border: Border.all(color: AppTheme.riskCritical.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline_rounded, color: AppTheme.riskCritical, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.riskCritical,
               ),
-              Text(email, style: GoogleFonts.jetBrainsMono(fontSize: 11, color: AppTheme.brandPrimary)),
-            ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityNote extends StatelessWidget {
+  const _SecurityNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.lock_rounded, size: 13, color: Color(0xFF7E97AC)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Sesi terenkripsi. Laporan tetap tersimpan di perangkat bila jaringan hilang.',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.45,
+              color: Colors.white.withValues(alpha: 0.55),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }

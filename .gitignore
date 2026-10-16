@@ -35,6 +35,11 @@ supabase/.temp/
 *.apk
 *.aab
 
+# Android build env
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/**/build/
+
 # IDE
 .idea/
 .vscode/

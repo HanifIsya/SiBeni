@@ -1,542 +1,1147 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../../core/theme.dart';
-import '../../core/user_session.dart';
-import '../../core/api_service.dart';
 
+import '../core/api_service.dart';
+import '../core/app_config.dart';
+import '../core/location_service.dart';
+import '../core/theme.dart';
+import '../core/user_session.dart';
+import '../core/zone_model.dart';
+import '../widgets/adaptive_page.dart';
+import '../widgets/pills.dart';
+import '../widgets/sb_button.dart';
+import '../widgets/sb_card.dart';
+import '../widgets/states.dart';
+
+/// Operational risk map.
+///
+/// Everything rendered here is data-driven: zone footprints and assembly points
+/// come from Postgres, the blue dot is the device's real GNSS fix, and warnings
+/// come from the early-warning feed. Nothing on this screen is hardcoded.
 class RiskMapScreen extends StatefulWidget {
-  final VoidCallback onNavigateToReport;
-  final VoidCallback onNavigateToEmergency;
-
   const RiskMapScreen({
     super.key,
     required this.onNavigateToReport,
     required this.onNavigateToEmergency,
   });
 
+  final VoidCallback onNavigateToReport;
+  final VoidCallback onNavigateToEmergency;
+
   @override
   State<RiskMapScreen> createState() => _RiskMapScreenState();
 }
 
 class _RiskMapScreenState extends State<RiskMapScreen> {
-  final MapController _mapController = MapController();
+  final MapController _map = MapController();
+
   List<Map<String, dynamic>> _warnings = [];
   List<Map<String, dynamic>> _zones = [];
-  bool _isLoading = true;
-
-  // Real geographic center of mining concession
-  final LatLng _workerPos = const LatLng(-2.1458291, 115.3489124);
-
-  // 7 Defined Geographic Points in OpenStreetMap
-  final Map<String, LatLng> _zoneCoordinates = {
-    'ZONE_PIT': const LatLng(-2.1458291, 115.3489124),
-    'ZONE_HAUL_ROAD': const LatLng(-2.1492000, 115.3524000),
-    'ZONE_STOCKPILE': const LatLng(-2.1528000, 115.3561000),
-    'ZONE_WORKSHOP': const LatLng(-2.1435000, 115.3468000),
-    'ZONE_PROCESSING': const LatLng(-2.1550000, 115.3585000),
-    'ZONE_WAREHOUSE': const LatLng(-2.1412000, 115.3435000),
-    'ZONE_SUPPORT': const LatLng(-2.1425000, 115.3452000),
-  };
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _load();
+    LocationService.instance.ensureFix();
   }
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
-    final warnings = await ApiService().getEarlyWarnings();
-    final zones = await ApiService().getMiningZones();
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final warnings = await ApiService.instance.getEarlyWarnings();
+    final zones = await ApiService.instance.getMiningZones();
+    if (!mounted) return;
+    setState(() {
+      _warnings = warnings;
+      _zones = zones;
+      _loading = false;
+    });
+  }
+
+  // ----------------------------------------------------------------- derived
+  LatLng? get _fix {
+    final p = LocationService.instance.position.value;
+    return p == null ? null : LatLng(p.latitude, p.longitude);
+  }
+
+  LatLng? get _initialCentre {
+    final me = _fix;
+    if (me != null) return me;
+    for (final z in _zones) {
+      final c = ZoneGeometry.fromJson(z['polygon_coordinates']).center;
+      if (c != null) return c;
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? get _activeZone {
+    final user = UserSession.instance.currentUser.value;
+    if (user == null || _zones.isEmpty) return _zones.isEmpty ? null : _zones.first;
+    final target = user.workZone.toLowerCase();
+    return _zones.firstWhere(
+      (z) => (z['name'] ?? '').toString().toLowerCase().startsWith(target.split(' (').first),
+      orElse: () => _zones.first,
+    );
+  }
+
+  String get _situationalRisk {
+    final active = _activeZone;
+    if (active != null) return (active['current_risk_level'] ?? 'low').toString();
+    final levels = _zones.map((z) => (z['current_risk_level'] ?? 'low').toString()).toList();
+    if (levels.contains('critical')) return 'critical';
+    if (levels.contains('high')) return 'high';
+    if (levels.contains('medium')) return 'medium';
+    return 'low';
+  }
+
+  // ------------------------------------------------------------------ actions
+  Future<void> _recentre() async {
+    await LocationService.instance.ensureFix();
+    final me = _fix;
+    if (me != null) {
+      _map.move(me, math.max(_map.camera.zoom, 16));
+    } else {
+      final centre = _initialCentre;
+      if (centre != null) _map.move(centre, 15);
+    }
     if (mounted) {
-      setState(() {
-        _warnings = warnings;
-        _zones = zones;
-        _isLoading = false;
-      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            me != null
+                ? 'Dipusatkan pada posisi Anda (${LocationService.instance.accuracyLabel})'
+                : 'Belum ada sinyal GPS. Tampilkan pusat zona.',
+          ),
+        ),
+      );
     }
   }
 
-  Color _getRiskColor(String level) {
-    switch (level.toLowerCase()) {
-      case 'critical':
-        return AppTheme.riskCritical;
-      case 'high':
-        return AppTheme.riskHigh;
-      case 'medium':
-        return AppTheme.riskMedium;
-      default:
-        return AppTheme.riskLow;
-    }
-  }
+  void _openZone(Map<String, dynamic> zone) {
+    final geometry = ZoneGeometry.fromJson(zone['polygon_coordinates']);
+    final assemblyName = (zone['evacuation_assembly_point'] ?? '').toString();
+    final route = (zone['evacuation_route_info'] ?? '').toString();
+    final me = _fix;
 
-  String _getRiskLabel(String level) {
-    switch (level.toLowerCase()) {
-      case 'critical':
-        return 'SANGAT TINGGI (AWAS)';
-      case 'high':
-        return 'TINGGI (SIAGA)';
-      case 'medium':
-        return 'SEDANG (WASPADA)';
-      default:
-        return 'RENDAH (AMAN)';
+    int? metres;
+    if (me != null && geometry.assembly != null) {
+      metres = ZoneGeometry.distanceMetres(me, geometry.assembly!).round();
     }
-  }
-
-  void _showZoneDetail(Map<String, dynamic> zone) {
-    final riskLevel = zone['current_risk_level'] ?? 'low';
-    final color = _getRiskColor(riskLevel);
-    final hazards = List<String>.from(zone['active_hazards'] ?? []);
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      zone['name'] ?? 'Zona Tambang',
-                      style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(20), border: Border.all(color: color)),
-                    child: Text(_getRiskLabel(riskLevel), style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
-                  ),
-                ],
+      isScrollControlled: true,
+      builder: (ctx) => _ZoneSheet(
+        name: (zone['name'] ?? 'Zona').toString().split(' (').first,
+        description: (zone['description'] ?? '').toString(),
+        level: (zone['current_risk_level'] ?? 'low').toString(),
+        hazards: List<String>.from(zone['active_hazards'] ?? const []),
+        assemblyName: assemblyName,
+        route: route,
+        distanceMetres: metres,
+        declaredDistance: zone['distance_to_assembly_point_m'] as int?,
+        hasFix: me != null,
+        onNavigateEmergency: widget.onNavigateToEmergency,
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------- build
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<GpsStatus>(
+      valueListenable: LocationService.instance.status,
+      builder: (context, gps, _) {
+        return AdaptivePage(
+          onRefresh: _load,
+          slivers: [
+            Reveal(child: _SituationCard(risk: _situationalRisk)),
+            const SizedBox(height: AppTheme.lg),
+
+            if (_loading && _warnings.isEmpty)
+              const _WarningSkeleton()
+            else if (_warnings.isNotEmpty) ...[
+              SectionHeader(
+                title: 'Peringatan Dini',
+                icon: Icons.campaign_rounded,
+                subtitle: '${_warnings.length} peringatan aktif untuk zona Anda',
               ),
-              const SizedBox(height: 10),
-              Text(zone['description'] ?? '', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.onSurfaceSecondary)),
-              const SizedBox(height: 12),
-              Text('Potensi Bahaya Teridentifikasi:', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              if (hazards.isEmpty)
-                Text('• Tidak ada ancaman geoteknik atau cuaca aktif di zona ini.', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.brandSafetyGreen))
-              else
-                ...hazards.map((h) => Text('• $h', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.riskHigh, fontWeight: FontWeight.w600))),
-              const SizedBox(height: 14),
+              for (final w in _warnings)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppTheme.md),
+                  child: _WarningCard(data: w),
+                ),
+              const SizedBox(height: AppTheme.xs),
+            ] else ...[
+              SectionHeader(
+                title: 'Peringatan Dini',
+                icon: Icons.campaign_rounded,
+              ),
+              const EmptyState(
+                icon: Icons.check_circle_outline_rounded,
+                title: 'Tidak ada peringatan aktif',
+                message: 'Tidak ada peringatan aktif untuk saat ini.',
+                compact: true,
+              ),
+              const SizedBox(height: AppTheme.lg),
+            ],
+
+            SectionHeader(
+              title: 'Peta Risiko',
+              icon: Icons.map_rounded,
+              subtitle: 'Ketuk zona untuk detail dan rute evakuasi',
+            ),
+            _MapCard(
+              mapController: _map,
+              zones: _zones,
+              warnings: _warnings,
+              onZoneTap: _openZone,
+              onRecentre: _recentre,
+            ),
+            const SizedBox(height: AppTheme.md),
+            const _Legend(),
+            const SizedBox(height: AppTheme.xl),
+
+            Row(
+              children: [
+                Expanded(
+                  child: SbButton(
+                    label: 'Lapor',
+                    icon: Icons.add_circle_outline_rounded,
+                    onPressed: widget.onNavigateToReport,
+                  ),
+                ),
+                const SizedBox(width: AppTheme.md),
+                Expanded(
+                  child: SbButton(
+                    label: 'Darurat',
+                    icon: Icons.sos_rounded,
+                    variant: SbButtonVariant.danger,
+                    onPressed: widget.onNavigateToEmergency,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ===========================================================================
+// Situation summary
+// ===========================================================================
+class _SituationCard extends StatelessWidget {
+  const _SituationCard({required this.risk});
+  final String risk;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = UserSession.instance.currentUser.value;
+
+    return SbHeroPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
               Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: AppTheme.surfaceMuted, borderRadius: BorderRadius.circular(8)),
-                child: Row(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: AppTheme.brMd,
+                ),
+                child: Icon(AppTheme.riskIcon(risk), color: const Color(0xFFFFD5D5), size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.flag, color: AppTheme.brandSafetyGreen, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Titik Kumpul Evakuasi Terdekat:', style: GoogleFonts.plusJakartaSans(fontSize: 10, color: AppTheme.onSurfaceSecondary)),
-                          Text(zone['evacuation_assembly_point'] ?? 'Assembly Point A', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandSafetyGreen)),
-                        ],
+                    Text(
+                      AppTheme.riskLabel(risk) == 'RENDAH'
+                          ? 'Kondisi Aman'
+                          : 'Status ${AppTheme.riskLabel(risk).toLowerCase()}',
+                      style: const TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.3,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      user?.zoneShortName ?? 'Zona tidak ditentukan',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppTheme.onDarkMuted,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
             ],
+          ),
+          const SizedBox(height: 16),
+          const _DarkDivider(),
+          const SizedBox(height: 12),
+          const _GpsReadout(),
+        ],
+      ),
+    );
+  }
+}
+
+class _DarkDivider extends StatelessWidget {
+  const _DarkDivider();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        height: 1,
+        color: Colors.white.withValues(alpha: 0.12),
+      );
+}
+
+/// Live GNSS readout — never a fabricated coordinate.
+class _GpsReadout extends StatelessWidget {
+  const _GpsReadout();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<GpsStatus>(
+      valueListenable: LocationService.instance.status,
+      builder: (context, status, _) {
+        final ready = status == GpsStatus.ready;
+        return Row(
+          children: [
+            Icon(
+              ready ? Icons.my_location_rounded : Icons.location_searching_rounded,
+              size: 16,
+              color: ready ? const Color(0xFF7DD3FC) : AppTheme.onDarkMuted,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                ready
+                    ? LocationService.instance.coordinatesLabel
+                    : _pendingLabel(status),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: ready
+                    ? AppTheme.mono(size: 12.5, weight: FontWeight.w700, color: Colors.white)
+                    : const TextStyle(fontSize: 12, color: AppTheme.onDarkMuted),
+              ),
+            ),
+            if (ready) ...[
+              const SizedBox(width: 8),
+              SbPill(
+                label: LocationService.instance.accuracyLabel,
+                color: const Color(0xFF7DD3FC),
+                dense: true,
+              ),
+            ] else if (status == GpsStatus.blocked || status == GpsStatus.serviceOff)
+              GestureDetector(
+                onTap: () => LocationService.instance.openSettings(),
+                child: const Text(
+                  'Aktifkan',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF7DD3FC),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  static String _pendingLabel(GpsStatus status) {
+    switch (status) {
+      case GpsStatus.blocked:
+        return 'Izin lokasi diblokir';
+      case GpsStatus.serviceOff:
+        return 'Layanan lokasi mati';
+      case GpsStatus.locating:
+        return 'Mencari sinyal GNSS…';
+      case GpsStatus.requesting:
+        return 'Menunggu izin lokasi';
+      default:
+        return 'Posisi belum tersedia';
+    }
+  }
+}
+
+/// Tiny adapter so the hero panel can subscribe to the position notifier.
+// (hero panel reads LocationService directly through ValueListenableBuilder)
+
+// ===========================================================================
+// Warnings
+// ===========================================================================
+class _WarningSkeleton extends StatelessWidget {
+  const _WarningSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List.generate(
+        2,
+        (i) => Padding(
+          padding: const EdgeInsets.only(bottom: AppTheme.md),
+          child: SbCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SkeletonBox(height: 14, width: 150),
+                const SizedBox(height: 12),
+                const SkeletonBox(height: 12),
+                const SizedBox(height: 8),
+                const SkeletonBox(height: 12, width: 220),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WarningCard extends StatefulWidget {
+  const _WarningCard({required this.data});
+  final Map<String, dynamic> data;
+
+  @override
+  State<_WarningCard> createState() => _WarningCardState();
+}
+
+class _WarningCardState extends State<_WarningCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final severity = (widget.data['severity'] ?? 'medium').toString();
+    final color = AppTheme.riskColor(severity);
+    final tags = List<String>.from(widget.data['hazard_tags'] ?? const []);
+    final zones = List<String>.from(widget.data['affected_zones'] ?? const []);
+    final instructions = (widget.data['safety_instructions'] ?? '').toString().trim();
+
+    return SbCard(
+      accent: color,
+      padding: const EdgeInsets.fromLTRB(18, 16, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(AppTheme.riskIcon(severity), size: 20, color: color),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  (widget.data['title'] ?? 'Peringatan dini').toString(),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    height: 1.35,
+                    letterSpacing: -0.1,
+                    color: AppTheme.ink,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              RiskPill(level: severity, dense: true, icon: false),
+            ],
+          ),
+          if ((widget.data['description'] ?? '').toString().trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              widget.data['description'].toString(),
+              style: const TextStyle(fontSize: 12.5, height: 1.5, color: AppTheme.inkMuted),
+            ),
+          ],
+          if (tags.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: tags.map((t) => SbTag(label: t, color: color)).toList(),
+            ),
+          ],
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 260),
+            crossFadeState:
+                _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (instructions.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SbPanel(
+                    color: AppTheme.canvas,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('TINDAKAN KESELAMATAN',
+                            style: AppTheme.eyebrow(color: color)),
+                        const SizedBox(height: 6),
+                        Text(
+                          instructions,
+                          style: const TextStyle(fontSize: 12.5, height: 1.5, color: AppTheme.ink),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (zones.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Zona terdampak',
+                    style: AppTheme.eyebrow(),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: zones
+                        .map((z) => SbTag(
+                              label: z.split(' (').first,
+                              icon: Icons.place_rounded,
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (instructions.isNotEmpty || zones.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _expanded = !_expanded);
+                },
+                icon: Icon(
+                  _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  size: 18,
+                ),
+                label: Text(_expanded ? 'Ringkas' : 'Rincian'),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  minimumSize: const Size(0, 40),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// Map
+// ===========================================================================
+class _MapCard extends StatelessWidget {
+  const _MapCard({
+    required this.mapController,
+    required this.zones,
+    required this.warnings,
+    required this.onZoneTap,
+    required this.onRecentre,
+  });
+
+  final MapController mapController;
+  final List<Map<String, dynamic>> zones;
+  final List<Map<String, dynamic>> warnings;
+  final void Function(Map<String, dynamic>) onZoneTap;
+  final VoidCallback onRecentre;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = (constraints.maxWidth * 0.82).clamp(260.0, 400.0);
+
+        return ClipRRect(
+          borderRadius: AppTheme.brLg,
+          child: Container(
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: AppTheme.brLg,
+              border: Border.all(color: AppTheme.hairline),
+              boxShadow: AppTheme.shadowSoft,
+            ),
+            child: ValueListenableBuilder<GpsStatus>(
+              valueListenable: LocationService.instance.status,
+              builder: (context, gps, _) {
+                final me = LocationService.instance.position.value;
+                final mePoint = me == null ? null : LatLng(me.latitude, me.longitude);
+                final centres = zones
+                    .map((z) => ZoneGeometry.fromJson(z['polygon_coordinates']).center)
+                    .whereType<LatLng>()
+                    .toList();
+
+                final initial = mePoint ??
+                    (centres.isNotEmpty ? centres.first : const LatLng(0, 0));
+
+                return Stack(
+                  children: [
+                    FlutterMap(
+                      mapController: mapController,
+                      options: MapOptions(
+                        initialCenter: initial,
+                        initialZoom: 15,
+                        minZoom: 4,
+                        maxZoom: 18.5,
+                        interactionOptions: const InteractionOptions(
+                          flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: AppConfig.tileUserAgent,
+                          maxZoom: 19,
+                        ),
+
+                        // Zone footprints, tinted by live risk level.
+                        PolygonLayer(
+                          polygons: zones
+                              .map((z) {
+                                final g = ZoneGeometry.fromJson(z['polygon_coordinates']);
+                                if (g.polygon.length < 3) return null;
+                                final color = AppTheme.riskColor(
+                                    (z['current_risk_level'] ?? 'low').toString());
+                                return Polygon(
+                                  points: g.polygon,
+                                  color: color.withValues(alpha: 0.16),
+                                  borderColor: color.withValues(alpha: 0.85),
+                                  borderStrokeWidth: 1.6,
+                                );
+                              })
+                              .whereType<Polygon>()
+                              .toList(),
+                        ),
+
+                        MarkerLayer(
+                          markers: [
+                            for (final z in zones)
+                              if (_geometry(z).center case final LatLng point)
+                                _zoneMarker(
+                                  point: point,
+                                  label: (z['name'] ?? 'Zona').toString().split(' (').first,
+                                  level: (z['current_risk_level'] ?? 'low').toString(),
+                                  onTap: () => onZoneTap(z),
+                                ),
+                          ],
+                        ),
+
+                        MarkerLayer(
+                          markers: [
+                            for (final z in zones)
+                              if (_geometry(z).assembly case final LatLng point)
+                                Marker(
+                                  point: point,
+                                  width: 26,
+                                  height: 26,
+                                  child: const _AssemblyMarker(),
+                                ),
+                          ],
+                        ),
+
+                        if (mePoint != null)
+                          MarkerLayer(
+                            markers: [_selfMarker(mePoint)],
+                          ),
+
+                        const RichAttributionWidget(
+                          alignment: AttributionAlignment.bottomLeft,
+                          attributions: [TextSourceAttribution('OpenStreetMap')],
+                        ),
+                      ],
+                    ),
+
+                    // Map controls
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Column(
+                        children: [
+                          _MapButton(
+                            icon: Icons.add_rounded,
+                            onTap: () => mapController.move(
+                              mapController.camera.center,
+                              mapController.camera.zoom + 1,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _MapButton(
+                            icon: Icons.remove_rounded,
+                            onTap: () => mapController.move(
+                              mapController.camera.center,
+                              mapController.camera.zoom - 1,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _MapButton(
+                            icon: Icons.my_location_rounded,
+                            filled: true,
+                            onTap: onRecentre,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // GPS prompt when the device has no fix yet.
+                    if (gps != GpsStatus.ready)
+                      Positioned(
+                        left: 10,
+                        right: 10,
+                        bottom: 34,
+                        child: _GpsPrompt(status: gps, onTap: onRecentre),
+                      ),
+                  ],
+                );
+              },
+            ),
           ),
         );
       },
     );
   }
 
+  static ZoneGeometry _geometry(Map<String, dynamic> zone) =>
+      ZoneGeometry.fromJson(zone['polygon_coordinates']);
+}
+
+class _MapButton extends StatelessWidget {
+  const _MapButton({required this.icon, required this.onTap, this.filled = false});
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool filled;
+
   @override
   Widget build(BuildContext context) {
-    final user = UserSession().currentUser.value;
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: filled ? AppTheme.brand : Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: const [
+            BoxShadow(color: Color(0x1A0B1622), blurRadius: 10, offset: Offset(0, 3)),
+          ],
+        ),
+        child: Icon(icon, size: 18, color: filled ? Colors.white : AppTheme.ink),
+      ),
+    );
+  }
+}
 
-    return RefreshIndicator(
-      onRefresh: _loadData,
-      color: AppTheme.brandPrimary,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+class _GpsPrompt extends StatelessWidget {
+  const _GpsPrompt({required this.status, required this.onTap});
+  final GpsStatus status;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked = status == GpsStatus.blocked || status == GpsStatus.serviceOff;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.ink.withValues(alpha: 0.92),
+          borderRadius: AppTheme.brMd,
+        ),
+        child: Row(
           children: [
-            // 1. Worker Identity & Shift Badge
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTheme.borderSubtle),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.location_on, color: AppTheme.brandPrimary, size: 22),
-                      const SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Lokasi Operasional Anda', style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary)),
-                          Text(
-                            user != null ? user.workZone.split(' (')[0] : 'Pit Utama',
-                            style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppTheme.riskHighBg,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppTheme.riskHigh),
-                    ),
-                    child: Text(
-                      'STATUS: SIAGA',
-                      style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: AppTheme.riskHigh),
-                    ),
-                  ),
-                ],
+            Icon(
+              blocked ? Icons.gps_off_rounded : Icons.gps_fixed_rounded,
+              size: 16,
+              color: blocked ? const Color(0xFFFCD34D) : const Color(0xFF7DD3FC),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                blocked
+                    ? 'Lokasi tidak aktif — ketuk untuk membuka setelan'
+                    : 'Ketuk untuk mengambil posisi GNSS Anda',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
             ),
-            const SizedBox(height: 14),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-            // 2. Early Warning Alert Card (Live Supabase & BMKG)
-            if (_isLoading && _warnings.isEmpty)
-              const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-            else if (_warnings.isNotEmpty)
-              ..._warnings.map((w) {
-                final severity = w['severity'] ?? 'medium';
-                final isHigh = severity == 'high' || severity == 'critical';
-                final tags = List<String>.from(w['hazard_tags'] ?? ['Cuaca Ekstrem', 'Longsor']);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12.0),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: isHigh ? AppTheme.riskHighBg : AppTheme.riskMediumBg,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border(
-                        left: BorderSide(color: isHigh ? AppTheme.riskHigh : AppTheme.riskMedium, width: 4),
-                        top: const BorderSide(color: AppTheme.borderSubtle, width: 1),
-                        right: const BorderSide(color: AppTheme.borderSubtle, width: 1),
-                        bottom: const BorderSide(color: AppTheme.borderSubtle, width: 1),
-                      ),
+/// A tappable zone pin. Returned as a [Marker] because the FlutterMap marker
+/// layer requires concrete [Marker] entries, not arbitrary widgets.
+Marker _zoneMarker({
+  required LatLng point,
+  required String label,
+  required String level,
+  required VoidCallback onTap,
+}) {
+  final color = AppTheme.riskColor(level);
+  return Marker(
+    point: point,
+    width: 108,
+    height: 54,
+    alignment: Alignment.topCenter,
+    child: GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            constraints: const BoxConstraints(maxWidth: 104),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: AppTheme.brSm,
+              border: Border.all(color: color, width: 1.6),
+              boxShadow: const [
+                BoxShadow(color: Color(0x26000000), blurRadius: 8, offset: Offset(0, 3)),
+              ],
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: AppTheme.ink,
+              ),
+            ),
+          ),
+          Icon(Icons.place_rounded, color: color, size: 24),
+        ],
+      ),
+    ),
+  );
+}
+
+class _AssemblyMarker extends StatelessWidget {
+  const _AssemblyMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.riskLow,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: const [
+          BoxShadow(color: Color(0x33000000), blurRadius: 6, offset: Offset(0, 2)),
+        ],
+      ),
+      child: const Icon(Icons.flag_rounded, size: 13, color: Colors.white),
+    );
+  }
+}
+
+/// The worker's live GNSS position.
+Marker _selfMarker(LatLng point) {
+  return Marker(
+    point: point,
+    width: 34,
+    height: 34,
+    child: Container(
+      decoration: BoxDecoration(
+        color: AppTheme.accent.withValues(alpha: 0.22),
+        shape: BoxShape.circle,
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.accent,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.accent.withValues(alpha: 0.45),
+              blurRadius: 12,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _Legend extends StatelessWidget {
+  const _Legend();
+
+  @override
+  Widget build(BuildContext context) {
+    const items = [
+      ('Rendah', 'low'),
+      ('Sedang', 'medium'),
+      ('Tinggi', 'high'),
+      ('Kritis', 'critical'),
+    ];
+    return Wrap(
+      spacing: AppTheme.sm,
+      runSpacing: AppTheme.sm,
+      alignment: WrapAlignment.center,
+      children: [
+        for (final (label, key) in items)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                  color: AppTheme.riskColor(key),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.inkMuted,
+                ),
+              ),
+            ],
+          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 9,
+              height: 9,
+              decoration: const BoxDecoration(color: AppTheme.accent, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              'Posisi Anda',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.inkMuted,
+              ),
+            ),
+          ],
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 9,
+              height: 9,
+              decoration: const BoxDecoration(color: AppTheme.riskLow, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              'Titik kumpul',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.inkMuted,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ===========================================================================
+// Zone detail sheet
+// ===========================================================================
+class _ZoneSheet extends StatelessWidget {
+  const _ZoneSheet({
+    required this.name,
+    required this.description,
+    required this.level,
+    required this.hazards,
+    required this.assemblyName,
+    required this.route,
+    required this.distanceMetres,
+    required this.declaredDistance,
+    required this.hasFix,
+    required this.onNavigateEmergency,
+  });
+
+  final String name;
+  final String description;
+  final String level;
+  final List<String> hazards;
+  final String assemblyName;
+  final String route;
+  final int? distanceMetres;
+  final int? declaredDistance;
+  final bool hasFix;
+  final VoidCallback onNavigateEmergency;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = AppTheme.riskColor(level);
+    final distance = distanceMetres ?? declaredDistance;
+
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppTheme.hairline,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.3,
+                      color: AppTheme.ink,
                     ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                RiskPill(level: level),
+              ],
+            ),
+            if (description.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                description,
+                style: const TextStyle(fontSize: 13, height: 1.5, color: AppTheme.inkMuted),
+              ),
+            ],
+            const SizedBox(height: 18),
+
+            SbCard(
+              color: AppTheme.riskBg(level),
+              borderColor: color.withValues(alpha: 0.3),
+              padding: const EdgeInsets.all(AppTheme.md),
+              child: Row(
+                children: [
+                  Icon(Icons.flag_rounded, color: AppTheme.riskLow, size: 22),
+                  const SizedBox(width: 11),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Icon(Icons.warning_amber_rounded, color: isHigh ? AppTheme.riskHigh : const Color(0xFFB45309), size: 22),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'PERINGATAN DINI RESMI ${w['source'] ?? 'BMKG'}',
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: isHigh ? AppTheme.riskHigh : const Color(0xFFB45309),
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(color: Colors.white70, borderRadius: BorderRadius.circular(4)),
-                              child: Text(
-                                severity.toString().toUpperCase(),
-                                style: GoogleFonts.jetBrainsMono(fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
                         Text(
-                          w['title'] ?? 'Waspada Potensi Bahaya',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w700, color: AppTheme.onSurfacePrimary),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          w['description'] ?? '',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.onSurfaceSecondary, height: 1.4),
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: tags.map((t) => _buildHazardChip(t, isHigh ? AppTheme.riskHigh : const Color(0xFFB45309))).toList(),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }),
-
-            // 3. Real Interactive OpenStreetMap Card
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Peta Risiko Interaktif (OpenStreetMap)', style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.bold, color: AppTheme.onSurfacePrimary)),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: AppTheme.surfaceMuted, borderRadius: BorderRadius.circular(6)),
-                  child: Text('OSM Live Tiles', style: GoogleFonts.jetBrainsMono(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.brandPrimary)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppTheme.borderSubtle),
-              ),
-              child: Column(
-                children: [
-                  ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-                    child: SizedBox(
-                      height: 280,
-                      width: double.infinity,
-                      child: Stack(
-                        children: [
-                          FlutterMap(
-                            mapController: _mapController,
-                            options: MapOptions(
-                              initialCenter: _workerPos,
-                              initialZoom: 14.5,
-                              minZoom: 12.0,
-                              maxZoom: 18.0,
-                            ),
-                            children: [
-                              TileLayer(
-                                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName: 'com.consnet.sibeni',
-                              ),
-                              // Haul Road Arterial Polyline connecting pit to facilities
-                              PolylineLayer(
-                                polylines: [
-                                  Polyline(
-                                    points: [
-                                      const LatLng(-2.1412, 115.3435), // Warehouse
-                                      const LatLng(-2.1435, 115.3468), // Workshop
-                                      const LatLng(-2.1458, 115.3489), // Pit Utama
-                                      const LatLng(-2.1492, 115.3524), // Haul Road KM 4
-                                      const LatLng(-2.1528, 115.3561), // Stockpile
-                                      const LatLng(-2.1550, 115.3585), // Crusher Plant
-                                    ],
-                                    color: const Color(0xFFEAB308),
-                                    strokeWidth: 4.0,
-                                  ),
-                                  // Green evacuation route
-                                  Polyline(
-                                    points: [
-                                      _workerPos,
-                                      const LatLng(-2.1448, 115.3475),
-                                      const LatLng(-2.1435, 115.3468),
-                                    ],
-                                    color: AppTheme.brandSafetyGreen,
-                                    strokeWidth: 3.5,
-                                  ),
-                                ],
-                              ),
-                              // Mining Zones Markers
-                              MarkerLayer(
-                                markers: [
-                                  // 7 Zones Markers
-                                  ..._zones.map((zone) {
-                                    final code = zone['code'] ?? 'ZONE_PIT';
-                                    final pos = _zoneCoordinates[code] ?? _workerPos;
-                                    final riskColor = _getRiskColor(zone['current_risk_level'] ?? 'low');
-                                    final shortName = zone['name'].toString().split(' (')[0];
-
-                                    return Marker(
-                                      point: pos,
-                                      width: 90,
-                                      height: 50,
-                                      child: GestureDetector(
-                                        onTap: () => _showZoneDetail(zone),
-                                        child: Column(
-                                          children: [
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                borderRadius: BorderRadius.circular(4),
-                                                border: Border.all(color: riskColor, width: 2),
-                                                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                                              ),
-                                              child: Text(
-                                                shortName,
-                                                style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.bold),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                            Icon(Icons.location_on, color: riskColor, size: 22),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  }),
-
-                                  // Worker Live Position Marker
-                                  Marker(
-                                    point: _workerPos,
-                                    width: 36,
-                                    height: 36,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.brandSecondary,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(color: Colors.white, width: 3),
-                                        boxShadow: const [BoxShadow(color: Color(0x6600B4D8), blurRadius: 8, spreadRadius: 2)],
-                                      ),
-                                      child: const Icon(Icons.person, color: Colors.white, size: 18),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                          assemblyName.isEmpty ? 'Titik kumpul' : assemblyName,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.ink,
                           ),
-
-                          // Map Controls (Zoom In/Out, Re-center)
-                          Positioned(
-                            top: 10,
-                            right: 10,
-                            child: Column(
-                              children: [
-                                FloatingActionButton.small(
-                                  heroTag: 'btn_zoom_in',
-                                  backgroundColor: Colors.white,
-                                  foregroundColor: AppTheme.brandPrimary,
-                                  onPressed: () {
-                                    _mapController.move(_mapController.camera.center, _mapController.camera.zoom + 1);
-                                  },
-                                  child: const Icon(Icons.add),
-                                ),
-                                const SizedBox(height: 6),
-                                FloatingActionButton.small(
-                                  heroTag: 'btn_zoom_out',
-                                  backgroundColor: Colors.white,
-                                  foregroundColor: AppTheme.brandPrimary,
-                                  onPressed: () {
-                                    _mapController.move(_mapController.camera.center, _mapController.camera.zoom - 1);
-                                  },
-                                  child: const Icon(Icons.remove),
-                                ),
-                                const SizedBox(height: 6),
-                                FloatingActionButton.small(
-                                  heroTag: 'btn_recenter',
-                                  backgroundColor: AppTheme.brandPrimary,
-                                  foregroundColor: Colors.white,
-                                  onPressed: () {
-                                    _mapController.move(_workerPos, 15.0);
-                                  },
-                                  child: const Icon(Icons.my_location),
-                                ),
-                              ],
-                            ),
+                        ),
+                        if (distance != null) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            hasFix
+                                ? 'Jarak dari posisi Anda ${_fmtMetres(distance)}'
+                                : 'Jarak terjadwal ${_fmtMetres(distance)}',
+                            style: AppTheme.mono(size: 11, color: AppTheme.inkMuted),
                           ),
                         ],
-                      ),
-                    ),
-                  ),
-
-                  // 4-Tier Risk Taxonomy Legend
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        _buildLegendItem('Rendah', AppTheme.riskLow),
-                        _buildLegendItem('Sedang', AppTheme.riskMedium),
-                        _buildLegendItem('Tinggi', AppTheme.riskHigh),
-                        _buildLegendItem('Kritis (SOS)', AppTheme.riskCritical),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 20),
 
-            // 4. Quick Action Cards (Lapor Cepat & Tombol SOS)
-            Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: AppTheme.minTouchTarget,
-                    child: ElevatedButton.icon(
-                      onPressed: widget.onNavigateToReport,
-                      icon: const Icon(Icons.edit_note, size: 20),
-                      label: const Text('Lapor Cepat', style: TextStyle(fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.brandPrimary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: SizedBox(
-                    height: AppTheme.minTouchTarget,
-                    child: ElevatedButton.icon(
-                      onPressed: widget.onNavigateToEmergency,
-                      icon: const Icon(Icons.sos, size: 24),
-                      label: const Text('DARURAT', style: TextStyle(fontWeight: FontWeight.w900)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.riskCritical,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            if (route.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text('RUTE EVAKUASI', style: AppTheme.eyebrow()),
+              const SizedBox(height: 8),
+              Text(
+                route,
+                style: const TextStyle(fontSize: 13, height: 1.55, color: AppTheme.ink),
+              ),
+            ],
+
+            if (hazards.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Text('BAHAYA AKTIF', style: AppTheme.eyebrow()),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: hazards
+                    .map((h) => SbTag(label: h, color: color, icon: Icons.warning_amber_rounded))
+                    .toList(),
+              ),
+            ] else ...[
+              const SizedBox(height: 18),
+              const EmptyState(
+                icon: Icons.verified_outlined,
+                title: 'Tidak ada bahaya aktif',
+                compact: true,
+              ),
+            ],
+
+            const SizedBox(height: 22),
+            SbButton(
+              label: 'Aktifkan Tanggap Darurat',
+              icon: Icons.sos_rounded,
+              variant: SbButtonVariant.danger,
+              onPressed: () {
+                Navigator.pop(context);
+                onNavigateEmergency();
+              },
             ),
-            const SizedBox(height: 16),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHazardChip(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w600, color: color),
-      ),
-    );
-  }
-
-  Widget _buildLegendItem(String label, Color color) {
-    return Row(
-      children: [
-        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 5),
-        Text(label, style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.onSurfaceSecondary)),
-      ],
-    );
+  static String _fmtMetres(int m) {
+    if (m < 1000) return '$m m';
+    return '${(m / 1000).toStringAsFixed(1)} km';
   }
 }

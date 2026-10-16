@@ -1,80 +1,103 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppRole {
-  worker,      // Pekerja Lapangan & Operator Alat Berat
-  supervisor,  // Pengawas Lapangan / Supervisor
-  hse,         // Tim Keselamatan & Kesehatan Kerja (HSE Officer)
-  management,  // Manajemen Eksekutif & General Manager
+  worker,
+  supervisor,
+  hse,
+  management,
 }
 
+/// The signed-in worker as the UI understands them.
 class UserProfile {
-  final String employeeId;
-  final String fullName;
-  final AppRole role;
-  final String workZone;
-  final String phone;
-
-  UserProfile({
+  const UserProfile({
     required this.employeeId,
     required this.fullName,
     required this.role,
     required this.workZone,
-    required this.phone,
+    this.phone,
   });
 
+  final String employeeId;
+  final String fullName;
+  final AppRole role;
+  final String workZone;
+  final String? phone;
+
   String get roleDisplayName {
+    switch (role) {
+      case AppRole.worker:
+        return 'Pekerja';
+      case AppRole.supervisor:
+        return 'Supervisor';
+      case AppRole.hse:
+        return 'HSE';
+      case AppRole.management:
+        return 'Manajemen';
+    }
+  }
+
+  String get roleLongName {
     switch (role) {
       case AppRole.worker:
         return 'Pekerja Lapangan / Operator';
       case AppRole.supervisor:
         return 'Supervisor Lapangan';
       case AppRole.hse:
-        return 'Tim HSE & Inspektur';
+        return 'Tim Keselamatan & Kesehatan Kerja';
       case AppRole.management:
         return 'Manajemen Eksekutif';
     }
   }
 
+  String get zoneShortName => workZone.split(' (').first;
+
+  bool get canVerify => role == AppRole.supervisor || role == AppRole.hse || role == AppRole.management;
+
+  bool get seesInsights => role == AppRole.hse || role == AppRole.management;
+
   Map<String, dynamic> toJson() => {
-    'employeeId': employeeId,
-    'fullName': fullName,
-    'role': role.name,
-    'workZone': workZone,
-    'phone': phone,
-  };
+        'employeeId': employeeId,
+        'fullName': fullName,
+        'role': role.name,
+        'workZone': workZone,
+        'phone': phone,
+      };
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
-    employeeId: json['employeeId'] ?? 'EMP-001',
-    fullName: json['fullName'] ?? 'Pekerja Tambang',
-    role: AppRole.values.firstWhere(
-      (e) => e.name == json['role'],
-      orElse: () => AppRole.worker,
-    ),
-    workZone: json['workZone'] ?? 'Pit Utama (Area Penambangan Aktif)',
-    phone: json['phone'] ?? '+62 812-3456-7890',
-  );
+        employeeId: json['employeeId'] as String? ?? '—',
+        fullName: json['fullName'] as String? ?? 'Karyawan Tambang',
+        role: AppRole.values.firstWhere(
+          (e) => e.name == json['role'],
+          orElse: () => AppRole.worker,
+        ),
+        workZone: json['workZone'] as String? ?? 'Pit Utama',
+        phone: json['phone'] as String?,
+      );
 }
 
+/// Locally cached identity, rehydrated from Supabase Auth on launch.
 class UserSession {
-  static final UserSession _instance = UserSession._internal();
-  factory UserSession() => _instance;
   UserSession._internal();
 
+  static final UserSession instance = UserSession._internal();
+
   final ValueNotifier<UserProfile?> currentUser = ValueNotifier<UserProfile?>(null);
+
   static const String _userKey = 'sibeni_current_user_profile';
 
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
-    final rawUser = prefs.getString(_userKey);
-    if (rawUser != null) {
-      try {
-        currentUser.value = UserProfile.fromJson(jsonDecode(rawUser));
-      } catch (_) {
-        currentUser.value = null;
-      }
-    } else {
+    final raw = prefs.getString(_userKey);
+    if (raw == null) {
+      currentUser.value = null;
+      return;
+    }
+    try {
+      currentUser.value = UserProfile.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
       currentUser.value = null;
     }
   }

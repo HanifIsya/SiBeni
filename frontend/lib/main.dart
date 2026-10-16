@@ -1,21 +1,30 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
+
+import 'core/app_config.dart';
+import 'core/auth_service.dart';
+import 'core/location_service.dart';
+import 'core/network_service.dart';
+import 'core/offline_sync_manager.dart';
 import 'core/theme.dart';
 import 'core/user_session.dart';
-import 'core/auth_service.dart';
-import 'core/offline_sync_manager.dart';
 import 'features/auth_screen.dart';
-import 'features/risk_map_screen.dart';
-import 'features/quick_report_screen.dart';
+import 'features/dashboard_screen.dart';
 import 'features/emergency_screen.dart';
 import 'features/inspection_screen.dart';
-import 'features/dashboard_screen.dart';
+import 'features/quick_report_screen.dart';
+import 'features/risk_map_screen.dart';
+import 'features/settings_sheet.dart';
+import 'widgets/network_pill.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AuthService().initialize();
-  await OfflineSyncManager().initialize();
-  await UserSession().initialize();
+  await AuthService.instance.initialize();
+  await NetworkService.instance.initialize();
+  OfflineSyncManager.instance.initialize();
+  await UserSession.instance.initialize();
   runApp(const SiBeniApp());
 }
 
@@ -25,325 +34,403 @@ class SiBeniApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SI BENI - Siaga Bencana Dini',
+      title: '${AppConfig.appName} — ${AppConfig.appTagline}',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
+      builder: (context, child) {
+        // Keep layouts intact when the OS font scale is large.
+        final scale = MediaQuery.textScalerOf(context).scale(1.0).clamp(0.9, 1.3);
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+          child: child!,
+        );
+      },
       home: ValueListenableBuilder<UserProfile?>(
-        valueListenable: UserSession().currentUser,
+        valueListenable: UserSession.instance.currentUser,
         builder: (context, user, _) {
-          if (user == null) {
-            return AuthScreen(onAuthSuccess: () {});
-          }
-          return const MainNavigationScreen();
+          if (user == null) return const AuthScreen();
+          return const AppShell();
         },
       ),
     );
   }
 }
 
-class MainNavigationScreen extends StatefulWidget {
-  const MainNavigationScreen({super.key});
-
-  @override
-  State<MainNavigationScreen> createState() => _MainNavigationScreenState();
+// ---------------------------------------------------------------------------
+// Navigation model
+// ---------------------------------------------------------------------------
+class _Destination {
+  const _Destination(this.label, this.icon, this.activeIcon, this.builder);
+  final String label;
+  final IconData icon;
+  final IconData activeIcon;
+  final WidgetBuilder builder;
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> {
-  int _currentIndex = 0;
+class AppShell extends StatefulWidget {
+  const AppShell({super.key});
 
-  void _showProfileModal() {
-    final user = UserSession().currentUser.value;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: AppTheme.brandPrimary,
-                    child: Text(
-                      user != null && user.fullName.isNotEmpty ? user.fullName[0].toUpperCase() : 'U',
-                      style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          user?.fullName ?? 'Karyawan',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          '${user?.roleDisplayName ?? "Pekerja"} • ${user?.employeeId ?? ""}',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppTheme.brandPrimary, fontWeight: FontWeight.w600),
-                        ),
-                        Text(
-                          user?.workZone.split(' (')[0] ?? 'Pit Utama',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppTheme.onSurfaceSecondary),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              const Divider(color: AppTheme.borderSubtle),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  const Icon(Icons.verified_user_outlined, size: 18, color: AppTheme.brandSafetyGreen),
-                  const SizedBox(width: 8),
-                  Text('Sesi Terverifikasi Supabase Auth', style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.brandSafetyGreen)),
-                ],
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await AuthService().signOut();
-                  },
-                  icon: const Icon(Icons.logout, size: 20),
-                  label: const Text('Keluar Akun (Sign Out)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.riskCritical,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-            ],
-          ),
-        );
-      },
-    );
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Warm the GPS in the background so the first map/report is already live.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(LocationService.instance.ensureFix());
+    });
+  }
+
+  List<_Destination> _destinations(AppRole role) {
+    final list = <_Destination>[
+      _Destination(
+        'Peta',
+        Icons.explore_outlined,
+        Icons.explore_rounded,
+        (_) => RiskMapScreen(
+          onNavigateToReport: () => _selectByLabel('Lapor'),
+          onNavigateToEmergency: () => _selectByLabel('Darurat'),
+        ),
+      ),
+      _Destination(
+        'Lapor',
+        Icons.add_circle_outline_rounded,
+        Icons.add_circle_rounded,
+        (_) => const QuickReportScreen(),
+      ),
+      _Destination(
+        'Darurat',
+        Icons.sos_rounded,
+        Icons.sos_rounded,
+        (_) => const EmergencyScreen(),
+      ),
+    ];
+
+    if (role == AppRole.supervisor || role == AppRole.hse || role == AppRole.management) {
+      list.add(_Destination(
+        'Inspeksi',
+        Icons.fact_check_outlined,
+        Icons.fact_check_rounded,
+        (_) => const InspectionScreen(),
+      ));
+    }
+
+    if (role == AppRole.hse || role == AppRole.management) {
+      list.add(_Destination(
+        'Insight',
+        Icons.insights_outlined,
+        Icons.insights_rounded,
+        (_) => const DashboardScreen(),
+      ));
+    }
+
+    return list;
+  }
+
+  void _selectByLabel(String label) {
+    final items = _destinations(UserSession.instance.currentUser.value?.role ?? AppRole.worker);
+    final target = items.indexWhere((d) => d.label == label);
+    if (target >= 0 && mounted) setState(() => _index = target);
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = UserSession().currentUser.value;
+    final user = UserSession.instance.currentUser.value;
     final role = user?.role ?? AppRole.worker;
+    final items = _destinations(role);
+    final safeIndex = _index.clamp(0, items.length - 1);
 
-    // Dynamic tabs based on user role
-    final List<Widget> screens = [];
-    final List<BottomNavigationBarItem> navItems = [];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useRail = constraints.maxWidth >= AppTheme.railBreakpoint;
+        final body = IndexedStack(
+          index: safeIndex,
+          children: items.map((d) => d.builder(context)).toList(),
+        );
 
-    // All roles have Risk Map
-    screens.add(RiskMapScreen(
-      onNavigateToReport: () => setState(() => _currentIndex = 1),
-      onNavigateToEmergency: () => setState(() => _currentIndex = 2),
-    ));
-    navItems.add(const BottomNavigationBarItem(
-      icon: Icon(Icons.map_outlined),
-      activeIcon: Icon(Icons.map),
-      label: 'Peta Risiko',
-    ));
+        return Scaffold(
+          extendBodyBehindAppBar: false,
+          appBar: _BrandAppBar(
+            user: user,
+            onProfile: () => showProfileSheet(context),
+            onSettings: () => showSettingsSheet(context),
+          ),
+          body: Row(
+            children: [
+              if (useRail)
+                _SideRail(
+                  index: safeIndex,
+                  items: items,
+                  onSelected: (i) => setState(() => _index = i),
+                ),
+              Expanded(child: SafeArea(top: false, child: body)),
+            ],
+          ),
+          bottomNavigationBar: useRail
+              ? null
+              : _BottomBar(
+                  index: safeIndex,
+                  items: items,
+                  onSelected: (i) => setState(() => _index = i),
+                ),
+        );
+      },
+    );
+  }
+}
 
-    // Worker, Supervisor, HSE have Quick Report
-    screens.add(const QuickReportScreen());
-    navItems.add(const BottomNavigationBarItem(
-      icon: Icon(Icons.edit_note_outlined),
-      activeIcon: Icon(Icons.edit_note),
-      label: 'Lapor Cepat',
-    ));
+// ---------------------------------------------------------------------------
+// Chrome
+// ---------------------------------------------------------------------------
+class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const _BrandAppBar({
+    required this.user,
+    required this.onProfile,
+    required this.onSettings,
+  });
 
-    // Worker, Supervisor, HSE have Emergency SOS
-    screens.add(const EmergencyScreen());
-    navItems.add(const BottomNavigationBarItem(
-      icon: Icon(Icons.sos_outlined, color: AppTheme.riskCritical),
-      activeIcon: Icon(Icons.sos, color: AppTheme.riskCritical),
-      label: 'Darurat SOS',
-    ));
+  final UserProfile? user;
+  final VoidCallback onProfile;
+  final VoidCallback onSettings;
 
-    // Supervisor, HSE, Management have Inspections
-    if (role == AppRole.supervisor || role == AppRole.hse || role == AppRole.management) {
-      screens.add(const InspectionScreen());
-      navItems.add(const BottomNavigationBarItem(
-        icon: Icon(Icons.fact_check_outlined),
-        activeIcon: Icon(Icons.fact_check),
-        label: 'Inspeksi K3',
-      ));
-    }
+  @override
+  Size get preferredSize => const Size.fromHeight(58);
 
-    // HSE and Management have Executive Dashboard
-    if (role == AppRole.hse || role == AppRole.management) {
-      screens.add(const DashboardScreen());
-      navItems.add(const BottomNavigationBarItem(
-        icon: Icon(Icons.bar_chart_outlined),
-        activeIcon: Icon(Icons.bar_chart),
-        label: 'Dashboard',
-      ));
-    }
-
-    // Guard index bounds if role changes
-    if (_currentIndex >= screens.length) {
-      _currentIndex = 0;
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: AppTheme.brandSecondary,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.shield, color: Colors.white, size: 20),
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      toolbarHeight: 58,
+      titleSpacing: 16,
+      backgroundColor: AppTheme.brandDeep,
+      foregroundColor: Colors.white,
+      title: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              gradient: AppTheme.accentGradient,
+              borderRadius: AppTheme.brSm,
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        'SI BENI',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 16,
+            child: const Icon(Icons.health_and_safety_rounded, color: Colors.white, size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        AppConfig.appName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15,
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 0.5,
+                          letterSpacing: 1.1,
+                          color: Colors.white,
+                          height: 1.1,
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          user?.employeeId ?? 'K3',
-                          style: GoogleFonts.jetBrainsMono(fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                    if (user != null) ...[
+                      const SizedBox(width: 7),
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            user!.employeeId,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.mono(
+                              size: 9.5,
+                              weight: FontWeight.w700,
+                              color: const Color(0xFFD6E6F2),
+                            ),
+                          ),
                         ),
                       ),
                     ],
+                  ],
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  user == null
+                      ? AppConfig.organisation
+                      : '${user!.fullName} · ${user!.roleDisplayName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.onDarkMuted,
+                    height: 1.2,
                   ),
-                  Text(
-                    user != null ? '${user.fullName} (${user.roleDisplayName})' : 'PT Consnet Mining',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11,
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
+        ],
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Center(
+            child: NetworkPill(
+              compact: true,
+              onTap: () => showNetworkSheet(context),
+            ),
+          ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.account_circle),
-            tooltip: 'Profil Karyawan',
-            onPressed: _showProfileModal,
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: Center(
+            child: _AvatarButton(user: user, onTap: onProfile),
           ),
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Peringatan Dini BMKG & Tanggap Darurat aktif.')),
-              );
-            },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(right: 10),
+          child: Center(
+            child: IconButton(
+              icon: const Icon(Icons.tune_rounded, size: 20, color: AppTheme.onDarkMuted),
+              tooltip: 'Pengaturan',
+              onPressed: onSettings,
+            ),
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Persistent Connectivity & Offline Sync Bar
-          ValueListenableBuilder<bool>(
-            valueListenable: OfflineSyncManager().isOnline,
-            builder: (context, online, _) {
-              return ValueListenableBuilder<int>(
-                valueListenable: OfflineSyncManager().queueCount,
-                builder: (context, count, _) {
-                  if (online && count == 0) {
-                    return Container(
-                      width: double.infinity,
-                      color: const Color(0xFFF0FDF4),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: AppTheme.statusOnline,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Terhubung • Data BMKG/BNPB Aktif (Live Render & Supabase)',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.brandSafetyGreen,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  } else {
-                    return Container(
-                      width: double.infinity,
-                      color: AppTheme.statusOfflineBg,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.cloud_off, size: 16, color: AppTheme.statusOfflineText),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              online
-                                  ? 'Menyinkronkan $count laporan ke server HSE...'
-                                  : 'Mode Offline Aktif • $count Laporan Disimpan Lokal (Kirim Otomatis Saat Online)',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.statusOfflineText,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                },
-              );
-            },
-          ),
+        ),
+      ],
+    );
+  }
+}
 
-          // Active Screen
-          Expanded(child: screens[_currentIndex]),
-        ],
+class _AvatarButton extends StatelessWidget {
+  const _AvatarButton({required this.user, required this.onTap});
+  final UserProfile? user;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = (user?.fullName.isNotEmpty == true)
+        ? user!.fullName.trim()[0].toUpperCase()
+        : '?';
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.12),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          initial,
+          style: const TextStyle(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: AppTheme.brandPrimary,
-        unselectedItemColor: AppTheme.onSurfaceSecondary,
-        selectedLabelStyle: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.bold),
-        unselectedLabelStyle: GoogleFonts.plusJakartaSans(fontSize: 11),
-        items: navItems,
+    );
+  }
+}
+
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({
+    required this.index,
+    required this.items,
+    required this.onSelected,
+  });
+
+  final int index;
+  final List<_Destination> items;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: AppTheme.hairline)),
+        color: AppTheme.surface,
+      ),
+      child: SafeArea(
+        top: false,
+        child: NavigationBar(
+          selectedIndex: index,
+          onDestinationSelected: (i) {
+            HapticFeedback.selectionClick();
+            onSelected(i);
+          },
+          destinations: items
+              .map(
+                (d) => NavigationDestination(
+                  icon: Icon(d.icon),
+                  selectedIcon: Icon(d.activeIcon),
+                  label: d.label,
+                  tooltip: d.label,
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class _SideRail extends StatelessWidget {
+  const _SideRail({
+    required this.index,
+    required this.items,
+    required this.onSelected,
+  });
+
+  final int index;
+  final List<_Destination> items;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppTheme.hairline)),
+        color: AppTheme.surface,
+      ),
+      child: NavigationRail(
+        backgroundColor: Colors.transparent,
+        selectedIndex: index,
+        onDestinationSelected: (i) {
+          HapticFeedback.selectionClick();
+          onSelected(i);
+        },
+        labelType: NavigationRailLabelType.all,
+        groupAlignment: -0.9,
+        destinations: items
+            .map(
+              (d) => NavigationRailDestination(
+                icon: Icon(d.icon),
+                selectedIcon: Icon(d.activeIcon),
+                label: Text(d.label),
+              ),
+            )
+            .toList(),
       ),
     );
   }

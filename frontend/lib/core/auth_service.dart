@@ -167,7 +167,8 @@ class AuthService {
             bytes,
             fileOptions: FileOptions(contentType: mimeType, upsert: true),
           );
-      return client.storage.from('avatars').getPublicUrl(path);
+      final publicUrl = client.storage.from('avatars').getPublicUrl(path);
+      return '$publicUrl?v=${DateTime.now().millisecondsSinceEpoch}';
     } catch (e) {
       debugPrint('uploadAvatar failed: $e');
       return null;

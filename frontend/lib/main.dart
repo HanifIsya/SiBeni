@@ -204,48 +204,51 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final user = UserSession.instance.currentUser.value;
-    final items = _destinationsFor(_currentRole);
-    final primary = items.where((d) => d.isPrimary).toList();
+    return ValueListenableBuilder<UserProfile?>(
+      valueListenable: UserSession.instance.currentUser,
+      builder: (context, user, _) {
+        final role = user?.role ?? AppRole.worker;
+        final items = _destinationsFor(role);
+        final primary = items.where((d) => d.isPrimary).toList();
 
-    // Keep the tab bar within a comfortable thumb span.
-    final safeIndex = _index.clamp(0, primary.length - 1);
-    _AppShellBus.instance.go = _goTo;
+        // Keep the tab bar within a comfortable thumb span.
+        final safeIndex = _index.clamp(0, primary.length - 1);
+        _AppShellBus.instance.go = _goTo;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final useRail = constraints.maxWidth >= AppTheme.railBreakpoint;
-        final body = IndexedStack(
-          index: safeIndex,
-          children: primary.map((d) => d.builder(context)).toList(),
-        );
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final useRail = constraints.maxWidth >= AppTheme.railBreakpoint;
+            final body = IndexedStack(
+              index: safeIndex,
+              children: primary.map((d) => d.builder(context)).toList(),
+            );
 
-        return Scaffold(
-          appBar: _BrandAppBar(
-            user: user,
-            secondary: items.where((d) => !d.isPrimary).toList(),
-            onSecondary: _goTo,
-            onProfile: () => _goTo('Profil'),
-            onSettings: () => showSettingsSheet(context),
-          ),
-          body: Row(
-            children: [
-              if (useRail)
-                _SideRail(
-                  index: safeIndex,
-                  items: primary,
-                  onSelected: (i) => setState(() => _index = i),
-                ),
-              Expanded(child: SafeArea(top: false, child: body)),
-            ],
-          ),
-          bottomNavigationBar: useRail
-              ? null
-              : _BottomBar(
-                  index: safeIndex,
-                  items: primary,
-                  onSelected: (i) => setState(() => _index = i),
-                ),
+            return Scaffold(
+              appBar: _BrandAppBar(
+                user: user,
+                onProfile: () => _goTo('Profil'),
+                onSettings: () => showSettingsSheet(context),
+              ),
+              body: Row(
+                children: [
+                  if (useRail)
+                    _SideRail(
+                      index: safeIndex,
+                      items: primary,
+                      onSelected: (i) => setState(() => _index = i),
+                    ),
+                  Expanded(child: SafeArea(top: false, child: body)),
+                ],
+              ),
+              bottomNavigationBar: useRail
+                  ? null
+                  : _BottomBar(
+                      index: safeIndex,
+                      items: primary,
+                      onSelected: (i) => setState(() => _index = i),
+                    ),
+            );
+          },
         );
       },
     );
@@ -265,15 +268,11 @@ class _AppShellBus {
 class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
   const _BrandAppBar({
     required this.user,
-    required this.secondary,
-    required this.onSecondary,
     required this.onProfile,
     required this.onSettings,
   });
 
   final UserProfile? user;
-  final List<_Destination> secondary;
-  final ValueChanged<String> onSecondary;
   final VoidCallback onProfile;
   final VoidCallback onSettings;
 
@@ -282,23 +281,11 @@ class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasOverflow = secondary.any((d) => d.label != 'Profil');
-
-    // AppBar's own layout decides how much width the actions take, so measuring
-    // the title budget from the full screen width is only an approximation.
-    // Instead the title is built with every part shrinkable: the wordmark and
-    // the employee chip ellipsize, and the subtitle drops below 360 dp. On a
-    // very tight viewport only the brand mark remains, which is preferable to
-    // pushing the wordmark off screen.
     return AppBar(
       toolbarHeight: 58,
       titleSpacing: 14,
       backgroundColor: AppTheme.brandDeep,
       foregroundColor: Colors.white,
-      // AppBar lays the title into a fixed middle slot. Feeding it a Row of a fixed
-      // mark plus an Expanded block overflows that slot, because the Expanded
-      // child's minimum is still the mark's width plus the gap. The identity
-      // block therefore owns the whole slot and draws the mark itself.
       title: _IdentityBlock(user: user),
       actions: [
         Padding(
@@ -307,17 +294,6 @@ class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
             child: NetworkPill(compact: true, onTap: () => showNetworkSheet(context)),
           ),
         ),
-        if (hasOverflow)
-          Padding(
-            padding: const EdgeInsets.only(right: 2),
-            child: Center(
-              child: IconButton(
-                icon: const Icon(Icons.grid_view_rounded, size: 20, color: AppTheme.onDarkMuted),
-                tooltip: 'Modul lainnya',
-                onPressed: () => _showOverflow(context),
-              ),
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.only(right: 6),
           child: Center(child: _AvatarButton(user: user, onTap: onProfile)),
@@ -327,65 +303,12 @@ class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
           child: Center(
             child: IconButton(
               icon: const Icon(Icons.tune_rounded, size: 20, color: AppTheme.onDarkMuted),
-              tooltip: 'Pengaturan',
+              tooltip: 'Pengaturan & Akun',
               onPressed: onSettings,
             ),
           ),
         ),
       ],
-    );
-  }
-
-  void _showOverflow(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppTheme.hairline,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 18),
-              child: Text(
-                'MODUL TAMBAHAN',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.1,
-                  color: AppTheme.inkFaint,
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            for (final d in secondary.where((d) => d.label != 'Profil'))
-              ListTile(
-                leading: Icon(d.icon, color: AppTheme.brand),
-                title: Text(
-                  d.label,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                ),
-                trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.inkFaint),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  onSecondary(d.label);
-                },
-              ),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -400,20 +323,16 @@ class _IdentityBlock extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         // The mark is the one element that must never be dropped — unless the
-        // slot is narrower than the mark itself, which happens on a very narrow
-        // device where the actions (status capsule, overflow, avatar, settings)
-        // consume the toolbar. Rendering nothing is the only correct answer
-        // there; the avatar still carries the identity.
+        // slot is narrower than the mark itself.
         const markSize = 34.0;
         const gap = 10.0;
         if (constraints.maxWidth < markSize + gap) return const SizedBox.shrink();
 
         final budget = constraints.maxWidth - markSize - gap;
 
-        // Below these budgets the chip and subtitle cost more than they
-        // explain, so they are dropped and the wordmark gets the room.
-        final showChip = user != null && budget >= 120;
-        final showSubtitle = budget >= 84;
+        // Display the employee ID chip if space permits; the full name line
+        // is always shown and gracefully ellipsizes when space is tight.
+        final showChip = user != null && budget >= 90;
 
         return Row(
           mainAxisSize: MainAxisSize.max,
@@ -467,22 +386,20 @@ class _IdentityBlock extends StatelessWidget {
                       ],
                     ],
                   ),
-                  if (showSubtitle) ...[
-                    const SizedBox(height: 1),
-                    Text(
-                      user == null
-                          ? AppConfig.organisation
-                          : '${user!.fullName} · ${user!.roleDisplayName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w500,
-                        color: AppTheme.onDarkMuted,
-                        height: 1.2,
-                      ),
+                  const SizedBox(height: 1),
+                  Text(
+                    user == null
+                        ? AppConfig.organisation
+                        : '${user!.fullName} · ${user!.roleDisplayName}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.onDarkMuted,
+                      height: 1.2,
                     ),
-                  ],
+                  ),
                 ],
               ),
             ),

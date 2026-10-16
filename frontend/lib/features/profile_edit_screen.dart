@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -25,6 +27,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   late final TextEditingController _name;
   late final TextEditingController _phone;
   String? _avatarUrl;
+  Uint8List? _localAvatarBytes;
   bool _saving = false;
   bool _uploading = false;
   String? _error;
@@ -64,6 +67,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       }
 
       final bytes = await file.readAsBytes();
+      setState(() {
+        _localAvatarBytes = bytes;
+        _uploading = true;
+        _error = null;
+      });
+
       final path = await AuthService.instance.uploadAvatar(
         bytes: bytes,
         fileName: file.name,
@@ -119,13 +128,42 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     setState(() => _saving = false);
 
     if (result.ok) {
-      setState(() => _avatarUrl = _user?.avatarUrl);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: AppTheme.online,
-          content: Text('Profil berhasil diperbarui.'),
-        ),
-      );
+      setState(() {
+        _avatarUrl = _user?.avatarUrl;
+      });
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            icon: const Icon(Icons.check_circle_rounded, color: AppTheme.online, size: 54),
+            title: const Text(
+              'Perubahan Disimpan',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+            ),
+            content: const Text(
+              'Profil dan foto akun Anda telah berhasil diperbarui di sistem SI BENI.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: AppTheme.inkMuted, height: 1.4),
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              SizedBox(
+                width: 130,
+                height: 42,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.online,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
     } else {
       setState(() => _error = result.error);
     }
@@ -222,13 +260,18 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                         border: Border.all(color: AppTheme.hairline, width: 2),
                       ),
                       clipBehavior: Clip.antiAlias,
-                      child: _avatarUrl != null && _avatarUrl!.isNotEmpty
-                          ? Image.network(
-                              _avatarUrl!,
+                      child: _localAvatarBytes != null
+                          ? Image.memory(
+                              _localAvatarBytes!,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stack) => _Initials(user),
                             )
-                          : _Initials(user),
+                          : (_avatarUrl != null && _avatarUrl!.isNotEmpty
+                              ? Image.network(
+                                  _avatarUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stack) => _Initials(user),
+                                )
+                              : _Initials(user)),
                     ),
                     Positioned(
                       right: 0,

@@ -25,9 +25,9 @@ CREATE POLICY "Users can update own profile"
     USING ((select auth.uid()) = id);
 
 -- 2. MINING ZONES POLICIES
-CREATE POLICY "Mining zones viewable by all authenticated users"
+CREATE POLICY "Mining zones viewable by all users"
     ON mining_zones FOR SELECT
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
 CREATE POLICY "Mining zones manageable by HSE and management"
@@ -44,7 +44,7 @@ CREATE POLICY "Mining zones manageable by HSE and management"
 -- 3. EARLY WARNINGS POLICIES
 CREATE POLICY "Early warnings viewable by everyone"
     ON early_warnings FOR SELECT
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
 CREATE POLICY "Early warnings manageable by HSE and system backend"
@@ -144,9 +144,9 @@ CREATE POLICY "Corrective actions editable by assigned PIC or HSE"
     );
 
 -- 7. ESG METRICS POLICIES
-CREATE POLICY "ESG metrics viewable by all authenticated users"
+CREATE POLICY "ESG metrics viewable by all users"
     ON energy_emission_metrics FOR SELECT
-    TO authenticated
+    TO anon, authenticated
     USING (true);
 
 CREATE POLICY "ESG metrics insertable/updatable by HSE and management"

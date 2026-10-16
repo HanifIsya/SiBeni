@@ -35,6 +35,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _password = TextEditingController();
   final _fullName = TextEditingController();
   final _employeeId = TextEditingController();
+  final _inviteCode = TextEditingController();
 
   AppRole _role = AppRole.worker;
   String _zone = 'Pit Utama';
@@ -62,6 +63,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _password.dispose();
     _fullName.dispose();
     _employeeId.dispose();
+    _inviteCode.dispose();
     super.dispose();
   }
 
@@ -98,6 +100,32 @@ class _AuthScreenState extends State<AuthScreen> {
           });
           return;
         }
+
+        String? code;
+        if (_role != AppRole.worker) {
+          code = _inviteCode.text.trim().toUpperCase();
+          if (code.isEmpty) {
+            setState(() {
+              _loading = false;
+              _error = 'Masukkan kode otorisasi peran ${_role.name.toUpperCase()}.';
+            });
+            return;
+          }
+          final validCodes = switch (_role) {
+            AppRole.supervisor => const ['SPV2026', 'SPV-CONSNET', 'SUPERVISOR'],
+            AppRole.hse => const ['HSE2026', 'HSE-CONSNET', 'HSE'],
+            AppRole.management => const ['MGT2026', 'MGT-CONSNET', 'MANAGEMENT'],
+            _ => const <String>[],
+          };
+          if (!validCodes.contains(code)) {
+            setState(() {
+              _loading = false;
+              _error = 'Kode otorisasi tidak valid untuk peran ${_role.name.toUpperCase()}.';
+            });
+            return;
+          }
+        }
+
         final res = await AuthService.instance.signUp(
           email: email,
           password: password,
@@ -105,6 +133,7 @@ class _AuthScreenState extends State<AuthScreen> {
           employeeId: _employeeId.text.trim().isEmpty ? null : _employeeId.text.trim(),
           role: _role,
           workZone: _zone,
+          inviteCode: code,
         );
         if (res.user == null) {
           setState(() => _error = 'Pendaftaran gagal. Periksa email atau hubungi HSE.');
@@ -254,6 +283,20 @@ class _AuthScreenState extends State<AuthScreen> {
                         );
                       }).toList(),
                     ),
+                    if (_role != AppRole.worker) ...[
+                      const SizedBox(height: 14),
+                      _Field(
+                        controller: _inviteCode,
+                        label: 'Kode otorisasi peran ${_role.name.toUpperCase()}',
+                        icon: Icons.vpn_key_outlined,
+                        textInputAction: TextInputAction.next,
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        'Pendaftaran peran non-pekerja memerlukan kode resmi (misal: ${_role == AppRole.supervisor ? 'SPV2026' : _role == AppRole.hse ? 'HSE2026' : 'MGT2026'}).',
+                        style: const TextStyle(fontSize: 11, color: AppTheme.inkFaint, height: 1.3),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     Text('Zona penugasan', style: Theme.of(context).textTheme.titleSmall),
                     const SizedBox(height: 8),

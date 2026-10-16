@@ -111,6 +111,13 @@ Keempat peran memiliki modul yang benar-benar berbeda, bukan sekadar nama berbed
 
 Matriks ini didefinisikan di `frontend/lib/core/user_session.dart` (`AppRoleCapabilities`) **dan** ditegakkan ulang di Postgres melalui Row Level Security, sehingga aplikasi yang dimodifikasi tetap tidak bisa melewati batas peran.
 
+### Kode Otorisasi Pendaftaran Peran (Invite Code)
+Saat mendaftar akun baru, peran non-pekerja memerlukan kode otorisasi resmi:
+- **Pekerja**: Tanpa kode (default).
+- **Supervisor**: `SPV2026` atau `SPV-CONSNET`
+- **HSE**: `HSE2026` atau `HSE-CONSNET`
+- **Manajemen**: `MGT2026` atau `MGT-CONSNET`
+
 Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — 24 pemeriksaan end-to-end terhadap API sungguhan, termasuk memastikan setiap tindakan terlarang benar-benar menghasilkan `403`.
 
 ---
@@ -129,7 +136,8 @@ Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — 24 pemeriksaan 
    - `supabase/migrations/001_initial_schema.sql`
    - `supabase/migrations/002_rls_and_policies.sql`
    - `supabase/migrations/003_zone_geometry.sql` — geometri zona dipindahkan dari kode klien ke database.
-   - `supabase/migrations/004_surabaya_site_and_write_paths.sql` — relokasi site ke Surabaya, perbaikan jalur tulis, Trickle pemicu, bucket avatar, dan pencarian peran.
+   - `supabase/migrations/004_surabaya_site_and_write_paths.sql` — relokasi site ke Surabaya, perbaikan jalur tulis, trigger pemicu, bucket avatar, dan penyesuaian peran.
+   - `supabase/migrations/005_role_invite_code_authorization.sql` — otorisasi pendaftaran peran via invite code (`SPV2026`, `HSE2026`, `MGT2026`).
 3. Masukkan data awal dengan menjalankan:
    - `supabase/seed.sql`
 

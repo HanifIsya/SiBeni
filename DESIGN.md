@@ -318,6 +318,19 @@ change `hse_status`, `hse_notes`, or `reporter_id`.
 **Employee number and role are read-only in the UI** and absent from the update
 payload — a worker cannot self-promote to HSE.
 
+### 4.9 Sign-Up & Role Authorization Codes
+
+Self-registration defaults to `worker` unless an official operational invite code
+is supplied during registration:
+- **Worker**: no code required.
+- **Supervisor**: requires code `SPV2026` or `SPV-CONSNET`.
+- **HSE**: requires code `HSE2026` or `HSE-CONSNET`.
+- **Management**: requires code `MGT2026` or `MGT-CONSNET`.
+
+This is enforced both in client validation and in database trigger
+`handle_new_user()` (`005_role_invite_code_authorization.sql`), so direct or
+untrusted API requests cannot bypass role authorization.
+
 ---
 
 ## 5. Motion

@@ -82,8 +82,8 @@ class AuthService {
 
   /// Self-registration.
   ///
-  /// New accounts are always provisioned as `worker` by the database trigger —
-  /// role escalation at sign-up would defeat the entire permission model.
+  /// Privileged roles require an operational invite code verified by the database
+  /// trigger; without a valid code the profile defaults securely to `worker`.
   Future<AuthResponse> signUp({
     required String email,
     required String password,
@@ -92,6 +92,7 @@ class AuthService {
     required AppRole role,
     required String workZone,
     String? phone,
+    String? inviteCode,
   }) async {
     final response = await client.auth.signUp(
       email: email.trim(),
@@ -99,10 +100,10 @@ class AuthService {
       data: {
         'full_name': fullName.trim(),
         'employee_id': employeeId?.trim(),
-        // Sent for audit only; the trigger forces the effective role.
-        'requested_role': role.name,
+        'role': role.name,
         'work_zone': workZone,
         'phone_number': phone?.trim(),
+        'invite_code': inviteCode?.trim(),
       },
     );
     if (response.user != null) {

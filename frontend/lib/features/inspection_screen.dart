@@ -7,6 +7,7 @@ import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
 import '../widgets/pills.dart';
+import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
 import '../widgets/sb_card.dart';
 import '../widgets/states.dart';
@@ -70,9 +71,52 @@ class _InspectionScreenState extends State<InspectionScreen> {
     return v is num ? v.toInt().clamp(1, 6) : 2;
   }
 
+  static String _managementStatus(Map<String, dynamic> a) =>
+      (a['management_status'] ?? 'APPROVED').toString().toUpperCase();
+
+  static bool _canAdvance(Map<String, dynamic> ticket, AppRole role) {
+    final stage = _stage(ticket);
+    final management = _managementStatus(ticket);
+    if (stage >= 6) return false;
+    if (management == 'PENDING' ||
+        management == 'REJECTED' ||
+        management == 'EVALUATED') {
+      return false;
+    }
+    if (role == AppRole.hse) return stage < 3;
+    if (role == AppRole.supervisor) return stage >= 4;
+    return false;
+  }
+
+  static String _advanceLabel(Map<String, dynamic> ticket, AppRole role) {
+    final stage = _stage(ticket);
+    if (role == AppRole.hse) {
+      return stage == 2 ? 'Verifikasi Temuan' : 'Verifikasi → ${_stages[stage]}';
+    }
+    if (stage == 4) return 'Mulai Perbaikan';
+    if (stage == 5) return 'Tandai Selesai';
+    return 'Lanjutkan Tahap';
+  }
+
   Future<void> _advance(Map<String, dynamic> ticket) async {
+    final role = UserSession.instance.currentUser.value?.role ?? AppRole.supervisor;
     final current = _stage(ticket);
-    if (current >= 6) return;
+    if (!_canAdvance(ticket, role)) {
+      final management = _managementStatus(ticket);
+      _toast(
+        current >= 6
+            ? 'Tindakan sudah selesai. Menunggu evaluasi Manajemen.'
+            : management == 'PENDING'
+                ? 'Tindakan masih menunggu persetujuan Manajemen.'
+                : management == 'REJECTED'
+                    ? 'Tindakan dikembalikan Manajemen. HSE harus merevisi rencana.'
+                    : role == AppRole.hse
+                        ? 'HSE hanya memverifikasi sampai tahap 3. Pelaksanaan dilakukan Supervisor.'
+                        : 'Tahap ini belum dapat dijalankan oleh peran Anda.',
+        AppTheme.riskHigh,
+      );
+      return;
+    }
 
     final id = (ticket['id'] ?? '').toString();
     if (id.isEmpty) {
@@ -82,11 +126,14 @@ class _InspectionScreenState extends State<InspectionScreen> {
 
     setState(() => _busyId = id);
 
-    final verifier = UserSession.instance.currentUser.value?.fullName ?? 'Petugas HSE';
+    final actor = UserSession.instance.currentUser.value?.fullName ?? 'Petugas';
+    final note = role == AppRole.hse
+        ? 'Diverifikasi $actor pada ${DateFormat('d MMM yyyy, HH:mm').format(DateTime.now())}'
+        : 'Dilaksanakan $actor pada ${DateFormat('d MMM yyyy, HH:mm').format(DateTime.now())}';
     final result = await ApiService.instance.advanceCorrectiveActionStage(
       id: id,
       nextStage: current + 1,
-      note: 'Diverifikasi $verifier pada ${DateFormat('d MMM yyyy, HH:mm').format(DateTime.now())}',
+      note: note,
     );
 
     if (!mounted) return;
@@ -123,18 +170,21 @@ class _InspectionScreenState extends State<InspectionScreen> {
   @override
   Widget build(BuildContext context) {
     final user = UserSession.instance.currentUser.value;
-    final canVerify = user?.role.canVerifyTickets ?? false;
+    final role = user?.role ?? AppRole.supervisor;
+    final canInspect = role.canInspect;
 
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
+        RoleWorkspaceBanner(role: role),
+        const SizedBox(height: AppTheme.lg),
         SectionHeader(
-          title: 'Inspeksi K3',
+          title: role == AppRole.hse ? 'Inspeksi & Verifikasi' : 'Inspeksi K3',
           icon: Icons.fact_check_rounded,
-          subtitle: canVerify
-              ? 'Pemeriksaan berkala & alur tindakan korektif'
-              : 'Pemantauan alur tindakan korektif lapangan',
-          action: canVerify
+          subtitle: role == AppRole.hse
+              ? 'Verifikasi temuan sampai tahap 3, lalu awasi pelaksanaan Supervisor.'
+              : 'Jalankan inspeksi lapangan dan selesaikan tindakan yang sudah disetujui Manajemen.',
+          action: canInspect
               ? SbButton(
                   label: 'Inspeksi Baru',
                   icon: Icons.add_task_rounded,
@@ -174,7 +224,10 @@ class _InspectionScreenState extends State<InspectionScreen> {
                 ticket: ticket,
                 stage: _stage(ticket),
                 stages: _stages,
-                canVerify: canVerify,
+                role: role,
+                managementStatus: _managementStatus(ticket),
+                canAdvance: _canAdvance(ticket, role),
+                advanceLabel: _advanceLabel(ticket, role),
                 busy: _busyId == (ticket['id'] ?? '').toString(),
                 onAdvance: () => _advance(ticket),
               ),
@@ -409,7 +462,10 @@ class _TicketCard extends StatelessWidget {
     required this.ticket,
     required this.stage,
     required this.stages,
-    required this.canVerify,
+    required this.role,
+    required this.managementStatus,
+    required this.canAdvance,
+    required this.advanceLabel,
     required this.busy,
     required this.onAdvance,
   });
@@ -417,7 +473,10 @@ class _TicketCard extends StatelessWidget {
   final Map<String, dynamic> ticket;
   final int stage;
   final List<String> stages;
-  final bool canVerify;
+  final AppRole role;
+  final String managementStatus;
+  final bool canAdvance;
+  final String advanceLabel;
   final bool busy;
   final VoidCallback onAdvance;
 
@@ -425,10 +484,24 @@ class _TicketCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final severity = (ticket['severity'] ?? 'medium').toString();
     final done = stage >= 6;
-    final color = done ? AppTheme.riskLow : AppTheme.riskColor(severity);
+    final evaluated = managementStatus == 'EVALUATED';
+    final waitingApproval = managementStatus == 'PENDING';
+    final rejected = managementStatus == 'REJECTED';
+    final color = evaluated
+        ? AppTheme.online
+        : rejected
+            ? AppTheme.riskCritical
+            : waitingApproval
+                ? const Color(0xFF6D28D9)
+                : done
+                    ? AppTheme.riskLow
+                    : AppTheme.riskColor(severity);
 
     final due = ticket['target_due_date'];
     final dueDate = due is String ? DateTime.tryParse(due) : null;
+    final report = ticket['hazard_report'] is Map
+        ? (ticket['hazard_report'] as Map).cast<String, dynamic>()
+        : null;
 
     return SbCard(
       accent: color,
@@ -452,10 +525,28 @@ class _TicketCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               SbPill(
-                label: done ? 'SELESAI' : stages[stage - 1].toUpperCase(),
-                icon: done ? Icons.check_circle_rounded : Icons.timelapse_rounded,
+                label: evaluated
+                    ? 'DIEVALUASI'
+                    : rejected
+                        ? 'DIKEMBALIKAN'
+                        : waitingApproval
+                            ? 'MENUNGGU MANAJEMEN'
+                            : done
+                                ? (managementStatus == 'APPROVED'
+                                    ? 'MENUNGGU EVALUASI'
+                                    : 'SELESAI')
+                                : stages[stage - 1].toUpperCase(),
+                icon: evaluated
+                    ? Icons.verified_rounded
+                    : rejected
+                        ? Icons.undo_rounded
+                        : waitingApproval
+                            ? Icons.hourglass_top_rounded
+                            : done
+                                ? Icons.fact_check_rounded
+                                : Icons.timelapse_rounded,
                 color: color,
-                background: AppTheme.riskBg(done ? 'low' : severity),
+                background: color.withValues(alpha: 0.10),
                 dense: true,
               ),
             ],
@@ -466,9 +557,68 @@ class _TicketCard extends StatelessWidget {
           if ((ticket['description'] ?? '').toString().trim().isNotEmpty) ...[
             Text(
               ticket['description'].toString(),
-              style: const TextStyle(fontSize: 12.5, height: 1.5, color: AppTheme.inkMuted),
+              style: const TextStyle(
+                fontSize: 12.5,
+                height: 1.5,
+                color: AppTheme.inkMuted,
+              ),
             ),
             const SizedBox(height: 12),
+          ],
+          if (report != null) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.canvas,
+                borderRadius: AppTheme.brSm,
+                border: Border.all(color: AppTheme.hairline),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.assignment_rounded,
+                        size: 13,
+                        color: AppTheme.brand,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        'LAPORAN TERKAIT',
+                        style: AppTheme.eyebrow(color: AppTheme.brand),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    (report['description'] ?? '-').toString(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      height: 1.4,
+                      color: AppTheme.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    [
+                      if (report['reporter_name'] != null)
+                        report['reporter_name'].toString(),
+                      if (report['zone_name'] != null)
+                        report['zone_name'].toString().split(' (').first,
+                    ].join(' · '),
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppTheme.inkFaint,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
           ],
           Wrap(
             spacing: 6,
@@ -490,17 +640,94 @@ class _TicketCard extends StatelessWidget {
               RiskPill(level: severity, icon: false),
             ],
           ),
-          if (!done && canVerify) ...[
+          if (waitingApproval) ...[
+            const SizedBox(height: 12),
+            _StatusNote(
+              color: const Color(0xFF6D28D9),
+              icon: Icons.business_center_rounded,
+              text:
+                  'Rencana tindakan menunggu persetujuan Manajemen. Supervisor belum dapat memulai pelaksanaan.',
+            ),
+          ] else if (rejected) ...[
+            const SizedBox(height: 12),
+            _StatusNote(
+              color: AppTheme.riskCritical,
+              icon: Icons.undo_rounded,
+              text:
+                  'Dikembalikan Manajemen. HSE perlu merevisi rencana tindakan sebelum dilanjutkan.',
+            ),
+          ] else if (done && managementStatus == 'APPROVED') ...[
+            const SizedBox(height: 12),
+            _StatusNote(
+              color: AppTheme.brand,
+              icon: Icons.fact_check_rounded,
+              text:
+                  'Pelaksanaan selesai. Menunggu evaluasi efektivitas dan penutupan oleh Manajemen.',
+            ),
+          ] else if (done && evaluated) ...[
+            const SizedBox(height: 12),
+            _StatusNote(
+              color: AppTheme.online,
+              icon: Icons.verified_rounded,
+              text: 'Tindakan selesai dan sudah dievaluasi Manajemen.',
+            ),
+          ],
+          if (canAdvance) ...[
             const SizedBox(height: 14),
             SbButton(
-              label: 'Verifikasi → ${stages[stage]}',
-              icon: Icons.arrow_forward_rounded,
+              label: advanceLabel,
+              icon: role == AppRole.hse
+                  ? Icons.verified_rounded
+                  : Icons.arrow_forward_rounded,
               height: 46,
               tone: color,
               loading: busy,
               onPressed: busy ? null : onAdvance,
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusNote extends StatelessWidget {
+  const _StatusNote({
+    required this.color,
+    required this.icon,
+    required this.text,
+  });
+
+  final Color color;
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: AppTheme.brSm,
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
         ],
       ),
     );

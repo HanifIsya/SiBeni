@@ -15,6 +15,7 @@
 - 📖 **[Product Requirements Document (PRD.md)](./PRD.md)**: Spesifikasi mendalam mengenai visi produk, dekonstruksi akar masalah (Fishbone 6M), use case diagram, spesifikasi fungsional 5 modul utama, skema basis data, dan metrik keberhasilan K3.
 - 🗺️ **[Implementation Plan & Roadmap (IMPLEMENTATION_PLAN.md)](./IMPLEMENTATION_PLAN.md)**: Rencana aksi terstruktur per fase, arsitektur monorepo, panduan integrasi MCP (Supabase, Render, Google Stitch), serta matriks verifikasi.
 - 🎨 **[Design System (DESIGN.md)](./DESIGN.md)**: Sistem desain v3.0 — taksonomi 4 tingkat risiko K3, tipografi ganda (*Plus Jakarta Sans* untuk antarmuka, *JetBrains Mono* untuk telemetri), skala spasi/radius/elevasi, token gerak & getaran, aturan responsif (NavigationBar → NavigationRail), dan cetak biru layar (M-01 s/d M-05).
+- 🔁 **[Revisi Aplikasi (docs/REVISI_APLIKASI.md)](./docs/REVISI_APLIKASI.md)**: Catatan lengkap tanggapan masukan klien Oktober 2026 — alur kerja per peran, perbaikan bug HSE, konsol evaluasi Manajemen, notifikasi, dan kanal koordinasi.
 
 ---
 
@@ -31,10 +32,10 @@
 |       Aplikasi Mobile          |            |     Backend Service & Dashboard    |
 |       (Flutter Dart)           |            |         (Next.js di Render)        |
 +--------------------------------+            +------------------------------------+
-| • M-01: Peta Risiko Tambang    |            | • REST API Endpoints (/api/bmkg,   |
-| • M-02: Lapor Cepat (Offline)  |◄──────────►|   /api/emergency, /api/reports)    |
+| • M-01: Peta Risiko Tambang    |            | • REST API (/api/reports,          |
+| • M-02: Lapor Cepat (Offline)  |◄──────────►|   /api/notifications, koordinasi)  |
 | • M-03: SOS Darurat & Evakuasi |  HTTP/WS   | • W-01: Dashboard K3 Eksekutif     |
-| • M-04: Inspeksi Lapangan K3   |            | • Verifikasi Tiket Corrective Act. |
+| • M-04: Inspeksi Lapangan K3   |            | • Persetujuan & Evaluasi Tindakan  |
 | • M-05: Dashboard Mobile       |            | • Pemantauan Emisi Karbon (CO2e)   |
 +---------------+----------------+            +-----------------+------------------+
                 │                                               │
@@ -83,10 +84,11 @@
    - **Tanpa angka hardcoded**: bila server belum mengembalikan nilai, kartu menampilkan `—` — sistem keselamatan tidak pernah menampilkan angka karangan.
    - **Hanya Manajemen** yang dapat mengisi/memperbarui angka resmi ( Supervisor dan HSE membaca saja).
 
-6. **Tinjauan Laporan Bahaya (M-06) — baru**
-   - Register laporan dengan ringkasan status dan empat filter: *Baru · Ditinjau · Tindak Lanjut · Ditutup*.
-   - Alur keputusan: `SUBMITTED → IN_REVIEW → ACTION_REQUIRED → CLOSED`, dengan catatan peninjauan.
-   - Hanya **HSE dan Manajemen** yang dapat menutup laporan.
+6. **Tinjauan Laporan Bahaya & Alur Persetujuan (M-06) — direvisi**
+   - Register laporan dengan ringkasan status dan filter: *Baru · Ditinjau · Menunggu Persetujuan · Tindak Lanjut · Ditutup*.
+   - Alur keputusan: `SUBMITTED → IN_REVIEW → PENDING_APPROVAL → ACTION_REQUIRED → CLOSED` (dengan `REJECTED` untuk laporan yang dikembalikan).
+   - **HSE** memverifikasi laporan dan **wajib mengetik tindakan korektif lengkap** (uraian, PIC, severity, tenggat) sebelum dapat dikirim — server menolak `400` bila belum diisi, memperbaiki bug laporan yang hilang sebelum tindakan sempat diketik.
+   - **Manajemen** menyetujui/menolak rencana tindakan, lalu mengevaluasi hasil dan menutup laporan. HSE tidak dapat menutup laporan secara langsung.
 
 7. **Kelola Peringatan Dini (M-07) — baru**
    - Terbitkan, ubah, dan nonaktifkan peringatan dini (severity, zona terdampak, label bahaya, tindakan keselamatan, masa berlaku).
@@ -96,6 +98,21 @@
    - Pengguna dapat mengubah nama, nomor HP, dan foto profil (unggah ke bucket privat `avatars`).
    - Nomor pegawai, peran, dan zona penugasan bersifat **read-only** — ditetapkan HSE dan tidak dapat diubah dari aplikasi.
 
+9. **Notifikasi Per Pengguna & Kanal Koordinasi — baru**
+   - Lonceng notifikasi dengan badge belum dibaca dan kotak masuk personal (satu baris per penerima) untuk kategori laporan, tindakan, persetujuan, evaluasi, dan koordinasi.
+   - Setiap tahap alur otomatis memberi tahu Pekerja, Supervisor, HSE, dan Manajemen sesuai perannya.
+   - Kanal **Koordinasi Supervisor ↔ HSE ↔ Manajemen**: subjek, pesan, prioritas `NORMAL`/`URGENT`, balasan, dan status `OPEN → ACKNOWLEDGED → RESOLVED`. Koordinasi urgent juga terpantau Manajemen.
+
+10. **Konsol Evaluasi Manajemen (Keputusan K3) — baru**
+    - Antrean **persetujuan tindakan** dari HSE dan temuan inspeksi, lengkap dengan konteks laporan asal.
+    - **Evaluasi efektivitas 1–5** dan penutupan laporan setelah pekerjaan lapangan selesai (tahap 6).
+    - Indikator keputusan: menunggu persetujuan, siap evaluasi, terlambat, disetujui, ditolak, dan sudah dievaluasi.
+
+11. **Tampilan Khas per Peran — direvisi**
+    - Setiap peran memiliki warna app bar, banner ruang kerja, langkah kerja, dan susunan navigasi yang berbeda, meskipun formulir laporan tetap sama.
+    - Pekerja (navy, Peta/Lapor/Darurat) · Supervisor (cyan, Inspeksi/Koordinasi/laksanakan tindakan/Dashboard) · HSE (hijau, verifikasi/susun tindakan) · Manajemen (violet, setujui/evaluasi/tutup laporan).
+    - SOS tetap satu ketukan dari menu overflow dan peta untuk peran non-pekerja.
+
 ---
 
 ## 🔐 Pembedaan Peran
@@ -104,10 +121,10 @@ Keempat peran memiliki modul yang benar-benar berbeda, bukan sekadar nama berbed
 
 | Peran | Modul Utama | Wajib | Tidak Boleh |
 | :--- | :--- | :--- | :--- |
-| **Pekerja** | Peta, Lapor, Darurat | Melaporkan bahaya, mengaktifkan SOS | Melihat register, memverifikasi tiket, mengubah angka K3 |
-| **Supervisor** | + Inspeksi, Insight | Memverifikasi tindakan korektif | Meninjau laporan, menerbitkan peringatan, menulis angka K3 |
-| **HSE** | Peta, Lapor, Darurat, Inspeksi, Laporan | Meninjau & menutup laporan, mengelola peringatan | Menulis angka K3/ESG resmi |
-| **Manajemen** | Peta, Lapor, Darurat, Laporan, Insight | Seluruh kewenangan | — |
+| **Pekerja** | Peta, Lapor, Darurat | Melaporkan bahaya, mengaktifkan SOS, memantau tindak lanjut | Melihat register, memverifikasi tiket, mengubah angka K3 |
+| **Supervisor** | Peta, Lapor, Inspeksi, Koordinasi, Dashboard | Inspeksi lapangan, koordinasi HSE/Manajemen, melaksanakan tindakan yang disetujui | Meninjau laporan, menyetujui tindakan, menulis angka K3 |
+| **HSE** | Peta, Laporan, Inspeksi, Koordinasi, Dashboard | Menerima & memverifikasi laporan, menyusun tindakan korektif, mengelola peringatan | Menu "Lapor", menutup laporan, menulis angka K3/ESG |
+| **Manajemen** | Peta, Laporan, Evaluasi, Koordinasi, Dashboard | Menyetujui/menolak tindakan HSE, evaluasi efektivitas, menutup laporan, menulis angka K3/ESG | Melaksanakan tindakan lapangan, memajukan tahap tindakan |
 
 Matriks ini didefinisikan di `frontend/lib/core/user_session.dart` (`AppRoleCapabilities`) **dan** ditegakkan ulang di Postgres melalui Row Level Security, sehingga aplikasi yang dimodifikasi tetap tidak bisa melewati batas peran.
 
@@ -118,7 +135,7 @@ Saat mendaftar akun baru, peran non-pekerja memerlukan kode otorisasi resmi:
 - **HSE**: `HSE2026` atau `HSE-CONSNET`
 - **Manajemen**: `MGT2026` atau `MGT-CONSNET`
 
-Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — 24 pemeriksaan end-to-end terhadap API sungguhan, termasuk memastikan setiap tindakan terlarang benar-benar menghasilkan `403`.
+Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — **46 pemeriksaan end-to-end** terhadap API sungguhan, termasuk seluruh alur revisi (verifikasi HSE → tindakan wajib lengkap → persetujuan Manajemen → pelaksanaan Supervisor → evaluasi & penutupan), notifikasi, koordinasi, serta penolakan `403` untuk setiap tindakan yang di luar kewenangan peran.
 
 ---
 
@@ -138,6 +155,7 @@ Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — 24 pemeriksaan 
    - `supabase/migrations/003_zone_geometry.sql` — geometri zona dipindahkan dari kode klien ke database.
    - `supabase/migrations/004_surabaya_site_and_write_paths.sql` — relokasi site ke Surabaya, perbaikan jalur tulis, trigger pemicu, bucket avatar, dan penyesuaian peran.
    - `supabase/migrations/005_role_invite_code_authorization.sql` — otorisasi pendaftaran peran via invite code (`SPV2026`, `HSE2026`, `MGT2026`).
+   - `supabase/migrations/006_role_workflow_management_notifications.sql` — alur kerja per peran: persetujuan & evaluasi Manajemen pada tindakan korektif, tabel `notifications`, kanal `coordination_requests`, penjaga kolom keputusan Manajemen, dan indeks register. Bersifat aditif — data lama tetap utuh.
 3. Masukkan data awal dengan menjalankan:
    - `supabase/seed.sql`
 
@@ -153,7 +171,7 @@ npm run build && npx next start -p 4310   # terminal terpisah
 node e2e-writepaths.mjs
 ```
 
-Target: **24/24 pemeriksaan lulus**, termasuk penolakan `403` untuk setiap tindakan yang di luar kewenangan peran.
+Target: **46/46 pemeriksaan lulus**, termasuk penolakan `403` untuk setiap tindakan yang di luar kewenangan peran dan `400` untuk tindakan korektif yang belum diketik. Skrip membuat laporan probe ber-`local_id` `e2e-*`; jalankan `DELETE FROM hazard_reports WHERE local_id LIKE 'e2e-%';` di SQL Editor setelah pengujian untuk membersihkannya.
 
 ### Menjalankan Aplikasi & Membuat Rilis
 

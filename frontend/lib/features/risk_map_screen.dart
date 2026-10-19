@@ -14,6 +14,7 @@ import '../core/zone_model.dart';
 import '../features/warning_manage_screen.dart';
 import '../widgets/adaptive_page.dart';
 import '../widgets/pills.dart';
+import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
 import '../widgets/sb_card.dart';
 import '../widgets/states.dart';
@@ -197,12 +198,17 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
   // -------------------------------------------------------------------- build
   @override
   Widget build(BuildContext context) {
+    final role = _role;
     return ValueListenableBuilder<GpsStatus>(
       valueListenable: LocationService.instance.status,
       builder: (context, gps, _) {
         return AdaptivePage(
           onRefresh: _load,
           slivers: [
+            if (role != AppRole.worker) ...[
+              RoleWorkspaceBanner(role: role, dense: true),
+              const SizedBox(height: AppTheme.md),
+            ],
             Reveal(child: _SituationCard(risk: _situationalRisk)),
             const SizedBox(height: AppTheme.lg),
 

@@ -43,12 +43,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 900));
 
     expect(find.byType(AppShell), findsOneWidget);
-    // HSE owns report review, so both destinations are present.
+    // HSE verifies reports and never files them: no "Lapor" tab. HSE instead
+    // gets the report register, field inspections, coordination, and the K3
+    // dashboard. SOS is available from the app-bar overflow.
     expect(find.text('Peta'), findsOneWidget);
-    expect(find.text('Lapor'), findsOneWidget);
-    expect(find.text('Darurat'), findsOneWidget);
+    expect(find.text('Lapor'), findsNothing);
+    expect(find.text('Darurat'), findsNothing);
     expect(find.text('Inspeksi'), findsOneWidget);
     expect(find.text('Laporan'), findsOneWidget);
+    expect(find.text('Koordinasi'), findsOneWidget);
+    expect(find.text('Dashboard'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     UserSession.instance.currentUser.value = null;

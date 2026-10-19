@@ -6,6 +6,7 @@ import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
 import '../widgets/pills.dart';
+import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
 import '../widgets/sb_card.dart';
 import '../widgets/states.dart';
@@ -75,18 +76,23 @@ class _InsightScreenState extends State<InsightScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final role = UserSession.instance.currentUser.value?.role ?? AppRole.supervisor;
     final latest = _latest;
     final period = DateTime.tryParse((latest?['record_date'] ?? '').toString());
 
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
+        if (role != AppRole.worker) ...[
+          RoleWorkspaceBanner(role: role),
+          const SizedBox(height: AppTheme.lg),
+        ],
         SectionHeader(
-          title: 'K3 & ESG',
+          title: 'Dashboard K3 & ESG',
           icon: Icons.insights_rounded,
           subtitle: period == null
-              ? 'Belum ada data pelaporan'
-              : 'Periode ${DateFormat('MMMM yyyy').format(period)}',
+              ? 'Belum ada data pelaporan K3, energi, dan emisi'
+              : 'K3 · energi · emisi — periode ${DateFormat('MMMM yyyy').format(period)}',
           action: _canEdit
               ? SbButton(
                   label: 'Perbarui Data',

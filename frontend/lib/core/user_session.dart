@@ -12,27 +12,51 @@ enum AppRole {
   /// Filed reports and SOS only. Cannot see the site register or K3 records.
   worker,
 
-  /// Runs the field: verifies corrective actions, reads the Insight figures.
+  /// Runs the field: inspects, coordinates, executes approved actions, reads
+  /// the K3 / energy / emissions dashboard.
   supervisor,
 
-  /// Owns hazard review: reads every filed report and decides its status.
+  /// Receives and verifies reports, then writes the corrective action that
+  /// Management will approve. HSE does not file reports.
   hse,
 
-  /// Owns the official K3 / ESG figures and oversees the whole system.
+  /// Approves HSE's action plans, evaluates results, and owns the official
+  /// K3 / ESG record.
   management,
 }
 
 /// Fine-grained capabilities, so screens ask "can I?" rather than comparing roles.
 extension AppRoleCapabilities on AppRole {
-  bool get canFileReport => true;
+  /// Only the field roles file hazard reports. HSE receives them; Management
+  /// evaluates them. Keeping this false for HSE also removes the "Lapor" tab.
+  bool get canFileReport => this == AppRole.worker || this == AppRole.supervisor;
+
   bool get canTriggerSos => true;
 
-  /// Corrective-action verification (M-04).
-  bool get canVerifyTickets =>
-      this == AppRole.supervisor || this == AppRole.hse || this == AppRole.management;
-
-  /// The hazard report register (M-06).
+  /// The hazard report register (M-06). Supervisor no longer reviews reports:
+  /// their responsibility is inspection and coordination.
   bool get canReviewReports => this == AppRole.hse || this == AppRole.management;
+
+  /// HSE verifies a report and issues the corrective action.
+  bool get canVerifyReports => this == AppRole.hse;
+
+  /// HSE authors corrective actions; Management approves them.
+  bool get canIssueActions => this == AppRole.hse;
+
+  /// Management is the decision gate for every HSE action plan.
+  bool get canApproveActions => this == AppRole.management;
+  bool get canEvaluateActions => this == AppRole.management;
+  bool get canCloseReports => this == AppRole.management;
+
+  /// Corrective-action pipeline: HSE verifies up to stage 3, Supervisor executes
+  /// stages 4–6. Management uses approve/evaluate instead of stage advancement.
+  bool get canVerifyTickets => this == AppRole.supervisor || this == AppRole.hse;
+  bool get canExecuteActions => this == AppRole.supervisor;
+
+  /// Field inspection and coordination.
+  bool get canInspect => this == AppRole.supervisor || this == AppRole.hse;
+  bool get canCoordinate =>
+      this == AppRole.supervisor || this == AppRole.hse || this == AppRole.management;
 
   /// Publishing and amending early warnings.
   bool get canManageWarnings => this == AppRole.hse || this == AppRole.management;
@@ -43,6 +67,46 @@ extension AppRoleCapabilities on AppRole {
 
   /// Write the official K3 / ESG figures. Management owns the record.
   bool get canEditInsight => this == AppRole.management;
+
+  /// Short label used by the role-aware workspace banner.
+  String get workspaceTitle {
+    switch (this) {
+      case AppRole.worker:
+        return 'Ruang Kerja Pekerja';
+      case AppRole.supervisor:
+        return 'Konsol Supervisor';
+      case AppRole.hse:
+        return 'Konsol Verifikasi HSE';
+      case AppRole.management:
+        return 'Konsol Evaluasi Manajemen';
+    }
+  }
+
+  String get workspaceSubtitle {
+    switch (this) {
+      case AppRole.worker:
+        return 'Laporkan bahaya, terima tindak lanjut, dan gunakan tombol darurat.';
+      case AppRole.supervisor:
+        return 'Inspeksi lapangan, koordinasi HSE/Manajemen, dan jalankan tindakan yang sudah disetujui.';
+      case AppRole.hse:
+        return 'Terima laporan, verifikasi temuan, lalu susun tindakan korektif untuk disetujui Manajemen.';
+      case AppRole.management:
+        return 'Setujui rencana tindakan, evaluasi hasilnya, dan tutup laporan K3.';
+    }
+  }
+
+  List<String> get workspaceSteps {
+    switch (this) {
+      case AppRole.worker:
+        return const ['Lapor', 'Pantau notifikasi', 'Darurat'];
+      case AppRole.supervisor:
+        return const ['Inspeksi', 'Koordinasi', 'Laksanakan tindakan', 'Dashboard K3'];
+      case AppRole.hse:
+        return const ['Verifikasi laporan', 'Susun tindakan', 'Awasi pelaksanaan'];
+      case AppRole.management:
+        return const ['Setujui tindakan', 'Evaluasi hasil', 'Tutup laporan', 'Keputusan K3'];
+    }
+  }
 }
 
 /// The signed-in worker as the UI understands them.
@@ -98,13 +162,13 @@ class UserProfile {
   String get roleScope {
     switch (role) {
       case AppRole.worker:
-        return 'Melaporkan bahaya dan mengaktifkan alarm darurat.';
+        return 'Melaporkan bahaya, menerima tindak lanjut, dan mengaktifkan alarm darurat.';
       case AppRole.supervisor:
-        return 'Memverifikasi tindakan korektif dan membaca angka K3.';
+        return 'Inspeksi lapangan, koordinasi dengan HSE/Manajemen, dan pelaksanaan tindakan yang disetujui.';
       case AppRole.hse:
-        return 'Meninjau laporan bahaya dan mengelola peringatan dini.';
+        return 'Menerima & memverifikasi laporan, menyusun tindakan korektif, dan mengawasi pelaksanaan.';
       case AppRole.management:
-        return 'Meninjau laporan dan mengisi angka K3 serta ESG.';
+        return 'Menyetujui rencana tindakan HSE, mengevaluasi hasil, menutup laporan, dan menetapkan keputusan K3/ESG.';
     }
   }
 

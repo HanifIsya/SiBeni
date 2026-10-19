@@ -47,6 +47,8 @@ class ApiService {
   static const String _kKpis = 'cache_kpis';
   static const String _kInspections = 'cache_inspections';
   static const String _kReports = 'cache_reports';
+  static const String _kNotifications = 'cache_notifications';
+  static const String _kCoordination = 'cache_coordination';
 
   // ---------------------------------------------------------------- headers
   /// Authorization for the current session. The API needs this to evaluate the
@@ -177,6 +179,146 @@ class ApiService {
     );
   }
 
+  /// Personal notification inbox plus the unread badge count.
+  Future<({List<Map<String, dynamic>> notifications, int unreadCount})>
+      getNotifications({int limit = 60}) async {
+    final data = await _getJson(
+      AppConfig.api('/api/notifications?limit=$limit'),
+      cacheKey: _kNotifications,
+      timeout: AppConfig.shortTimeout,
+    );
+    if (data == null) {
+      return (notifications: <Map<String, dynamic>>[], unreadCount: 0);
+    }
+    return (
+      notifications: _mapList(data['notifications']),
+      unreadCount: (data['unread_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<ApiResult> markNotificationsRead({
+    String? id,
+    List<String>? ids,
+    bool markAll = false,
+  }) async {
+    try {
+      final res = await http
+          .patch(
+            Uri.parse(AppConfig.api('/api/notifications')),
+            headers: _headers,
+            body: jsonEncode({
+              if (markAll) 'mark_all': true,
+              'id': ?id,
+              if (ids != null && ids.isNotEmpty) 'ids': ids,
+            }),
+          )
+          .timeout(AppConfig.shortTimeout);
+      final body = _decode(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _invalidate(_kNotifications);
+        return ApiResult.ok(
+          body?['message']?.toString() ?? 'Notifikasi ditandai sudah dibaca.',
+          data: body,
+        );
+      }
+      return ApiResult.fail(_messageFor(res.statusCode, body));
+    } catch (e) {
+      return ApiResult.fail(_messageForTransport(e));
+    }
+  }
+
+  /// Coordination channel between Supervisor, HSE and Management.
+  Future<({List<Map<String, dynamic>> requests, Map<String, dynamic> counts})>
+      getCoordination({String? status}) async {
+    final query = status == null ? '' : '?status=$status';
+    final data = await _getJson(
+      AppConfig.api('/api/coordination$query'),
+      cacheKey: _kCoordination,
+      timeout: AppConfig.longTimeout,
+    );
+    if (data == null) {
+      return (
+        requests: await _readCacheList(_kCoordination),
+        counts: const <String, dynamic>{},
+      );
+    }
+    final countsRaw = data['counts'];
+    return (
+      requests: _mapList(data['requests']),
+      counts: countsRaw is Map
+          ? countsRaw.map((k, v) => MapEntry(k.toString(), v))
+          : const <String, dynamic>{},
+    );
+  }
+
+  Future<ApiResult> sendCoordination({
+    required String toRole,
+    required String subject,
+    required String message,
+    required String priority,
+    String? zoneName,
+    String? relatedActionId,
+  }) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse(AppConfig.api('/api/coordination')),
+            headers: _headers,
+            body: jsonEncode({
+              'to_role': toRole,
+              'subject': subject,
+              'message': message,
+              'priority': priority,
+              if (zoneName != null && zoneName.isNotEmpty) 'zone_name': zoneName,
+              'related_action_id': ?relatedActionId,
+            }),
+          )
+          .timeout(AppConfig.shortTimeout);
+      final body = _decode(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _invalidate(_kCoordination);
+        return ApiResult.ok(
+          body?['message']?.toString() ?? 'Koordinasi terkirim.',
+          data: body,
+        );
+      }
+      return ApiResult.fail(_messageFor(res.statusCode, body));
+    } catch (e) {
+      return ApiResult.fail(_messageForTransport(e));
+    }
+  }
+
+  Future<ApiResult> respondCoordination({
+    required String id,
+    required String response,
+    String status = 'RESOLVED',
+  }) async {
+    try {
+      final res = await http
+          .patch(
+            Uri.parse(AppConfig.api('/api/coordination')),
+            headers: _headers,
+            body: jsonEncode({
+              'id': id,
+              'response': response,
+              'status': status,
+            }),
+          )
+          .timeout(AppConfig.shortTimeout);
+      final body = _decode(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _invalidate(_kCoordination);
+        return ApiResult.ok(
+          body?['message']?.toString() ?? 'Koordinasi diperbarui.',
+          data: body,
+        );
+      }
+      return ApiResult.fail(_messageFor(res.statusCode, body));
+    } catch (e) {
+      return ApiResult.fail(_messageForTransport(e));
+    }
+  }
+
   // ----------------------------------------------------------------- writes
   /// Advance a corrective action one stage.
   ///
@@ -218,11 +360,49 @@ class ApiService {
     }
   }
 
-  /// HSE review decision on a filed report.
+  /// Management decision on a corrective action: approve, reject, or evaluate.
+  Future<ApiResult> decideCorrectiveAction({
+    required String id,
+    required String decision,
+    String? notes,
+    int? effectivenessRating,
+  }) async {
+    try {
+      final res = await http
+          .patch(
+            Uri.parse(AppConfig.api('/api/inspections')),
+            headers: _headers,
+            body: jsonEncode({
+              'id': id,
+              'management_decision': decision,
+              if (notes != null && notes.trim().isNotEmpty) 'management_notes': notes.trim(),
+              'effectiveness_rating': ?effectivenessRating,
+            }),
+          )
+          .timeout(AppConfig.shortTimeout);
+
+      final body = _decode(res);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _invalidate(_kInspections);
+        await _invalidate(_kReports);
+        return ApiResult.ok(
+          body?['message']?.toString() ?? 'Keputusan Manajemen tersimpan.',
+          data: body,
+        );
+      }
+      return ApiResult.fail(_messageFor(res.statusCode, body));
+    } catch (e) {
+      return ApiResult.fail(_messageForTransport(e));
+    }
+  }
+
+  /// HSE review decision on a filed report. When [action] is present the report
+  /// moves to PENDING_APPROVAL and the corrective action is stored atomically.
   Future<ApiResult> reviewReport({
     required String id,
     required String status,
     String? notes,
+    Map<String, dynamic>? action,
   }) async {
     try {
       final res = await http
@@ -233,6 +413,7 @@ class ApiService {
               'id': id,
               'hse_status': status,
               if (notes != null && notes.trim().isNotEmpty) 'hse_notes': notes.trim(),
+              'action': ?action,
             }),
           )
           .timeout(AppConfig.shortTimeout);

@@ -1,9 +1,21 @@
 /**
  * End-to-end check of the SI BENI write paths against a live Supabase project.
  *
- * Signs in as each seeded account, then exercises the endpoints that were
- * previously broken: report ingest, HSE review, corrective-action advance,
- * early-warning CRUD, and ESG metric writes.
+ * Signs in as each seeded account, then exercises the endpoints that carry the
+ * revised role workflow:
+ *
+ *   worker     files a hazard report
+ *   HSE        verifies it, then MUST type a complete corrective action
+ *   Management approves the action, later evaluates and closes the report
+ *   supervisor executes stages 4–6 in the field
+ *
+ * Also checks role boundaries (403 on every out-of-role action), notifications,
+ * coordination, inspections, early warnings and ESG writes.
+ *
+ * NOTE: hazard_reports has no DELETE policy, so the probe report stays in the
+ * database. It is stamped with an `e2e-` local_id and can be removed from the
+ * SQL editor with:
+ *   DELETE FROM hazard_reports WHERE local_id LIKE 'e2e-%';
  */
 import { createClient } from "@supabase/supabase-js";
 
@@ -128,19 +140,89 @@ async function main() {
     `worker sees ${(workerRegister.body?.reports || []).length} rows`
   );
 
-  // -------------------------------------------------------------- review flow
+  // -------------------------------------------------- revised report workflow
+  let probeReport = mine;
+  let probeAction = null;
+
   if (mine) {
     const review = await call(sessions.hse.token, "/api/reports", {
       method: "PATCH",
       body: JSON.stringify({ id: mine.id, hse_status: "IN_REVIEW", hse_notes: "Probe review" }),
     });
-    check("HSE can review a report", review.status === 200, review.body?.error || "");
+    check("HSE can verify a report", review.status === 200, review.body?.error || "");
 
-    const close = await call(sessions.hse.token, "/api/reports", {
+    // The old bug: tapping "Tindakan" closed the report before text was typed.
+    // The server must now refuse an action with no details.
+    const emptyAction = await call(sessions.hse.token, "/api/reports", {
       method: "PATCH",
-      body: JSON.stringify({ id: mine.id, hse_status: "CLOSED", hse_notes: "Probe closed" }),
+      body: JSON.stringify({ id: mine.id, hse_status: "PENDING_APPROVAL", hse_notes: "coba" }),
     });
-    check("HSE can close a report", close.status === 200, close.body?.error || "");
+    check(
+      "report cannot enter PENDING_APPROVAL without action detail",
+      emptyAction.status === 400,
+      `status=${emptyAction.status}`
+    );
+
+    const blankDescription = await call(sessions.hse.token, "/api/reports", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: mine.id,
+        hse_status: "PENDING_APPROVAL",
+        hse_notes: "coba",
+        action: { description: "  ", assigned_pic_name: "PIC", target_due_date: "2026-12-31" },
+      }),
+    });
+    check(
+      "action requires typed description",
+      blankDescription.status === 400,
+      `status=${blankDescription.status}`
+    );
+
+    const workerAction = await call(sessions.worker.token, "/api/reports", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: mine.id,
+        hse_status: "PENDING_APPROVAL",
+        hse_notes: "worker mencoba",
+        action: { description: "x", assigned_pic_name: "x", target_due_date: "2026-12-31" },
+      }),
+    });
+    check("worker cannot issue corrective actions", workerAction.status === 403, `status=${workerAction.status}`);
+
+    const actionRes = await call(sessions.hse.token, "/api/reports", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: mine.id,
+        hse_status: "PENDING_APPROVAL",
+        hse_notes: "Tindakan uji end-to-end.",
+        action: {
+          title: "E2E probe corrective action",
+          description: "Pasang barikade dan rambu di area probe.",
+          assigned_pic_name: "Pengawas Pit Utama",
+          severity: "high",
+          target_due_date: "2026-12-31",
+        },
+      }),
+    });
+    check(
+      "HSE can submit a complete action",
+      actionRes.status === 200 && actionRes.body?.action?.id,
+      actionRes.body?.error || `action_id=${actionRes.body?.action?.id}`
+    );
+    probeAction = actionRes.body?.action || null;
+
+    check(
+      "report is PENDING_APPROVAL after HSE action",
+      String(actionRes.body?.report?.hse_status).toUpperCase() === "PENDING_APPROVAL",
+      `status=${actionRes.body?.report?.hse_status}`
+    );
+
+    // HSE cannot close the report directly: closure is a Management decision.
+    const hseClose = await call(sessions.hse.token, "/api/reports", {
+      method: "PATCH",
+      body: JSON.stringify({ id: mine.id, hse_status: "CLOSED", hse_notes: "coba tutup" }),
+    });
+    check("HSE cannot close a report directly", hseClose.status === 403, `status=${hseClose.status}`);
 
     // A worker must be refused.
     const denied = await call(sessions.worker.token, "/api/reports", {
@@ -148,6 +230,152 @@ async function main() {
       body: JSON.stringify({ id: mine.id, hse_status: "CLOSED" }),
     });
     check("worker cannot review", denied.status === 403, `status=${denied.status}`);
+
+    if (probeAction?.id) {
+      // Supervisor cannot approve its own work.
+      const supApprove = await call(sessions.supervisor.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({ id: probeAction.id, management_decision: "APPROVED" }),
+      });
+      check(
+        "supervisor cannot approve management decision",
+        supApprove.status === 403,
+        `status=${supApprove.status}`
+      );
+
+      const approve = await call(sessions.management.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: probeAction.id,
+          management_decision: "APPROVED",
+          management_notes: "Disetujui untuk dieksekusi lapangan.",
+        }),
+      });
+      check(
+        "management approves the action plan",
+        approve.status === 200 && Number(approve.body?.action?.stage_number) === 4,
+        approve.body?.error || `stage=${approve.body?.action?.stage_number}`
+      );
+      check(
+        "report becomes ACTION_REQUIRED after approval",
+        String(approve.body?.report?.hse_status).toUpperCase() === "ACTION_REQUIRED",
+        `status=${approve.body?.report?.hse_status}`
+      );
+
+      // Management cannot execute stages; that is Supervisor's job.
+      const mgmtStage = await call(sessions.management.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({ id: probeAction.id, stage_number: 5 }),
+      });
+      check(
+        "management cannot advance field stages",
+        mgmtStage.status === 403,
+        `status=${mgmtStage.status}`
+      );
+
+      const advance5 = await call(sessions.supervisor.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: probeAction.id,
+          stage_number: 5,
+          hse_verification_notes: "e2e execution probe",
+        }),
+      });
+      check(
+        "supervisor advances action to stage 5",
+        advance5.status === 200 && Number(advance5.body?.action?.stage_number) === 5,
+        advance5.body?.error || `stage=${advance5.body?.action?.stage_number}`
+      );
+
+      // Evaluation must not close a report while field work is unfinished.
+      const earlyEval = await call(sessions.management.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: probeAction.id,
+          management_decision: "EVALUATED",
+          management_notes: "Evaluasi terlalu dini",
+          effectiveness_rating: 4,
+        }),
+      });
+      check(
+        "evaluation blocked before stage 6",
+        earlyEval.status === 409,
+        `status=${earlyEval.status}`
+      );
+
+      const advance6 = await call(sessions.supervisor.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({ id: probeAction.id, stage_number: 6 }),
+      });
+      check(
+        "supervisor advances action to stage 6",
+        advance6.status === 200 && Number(advance6.body?.action?.stage_number) === 6,
+        advance6.body?.error || `stage=${advance6.body?.action?.stage_number}`
+      );
+
+      const evaluate = await call(sessions.management.token, "/api/inspections", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: probeAction.id,
+          management_decision: "EVALUATED",
+          management_notes: "Tindakan terbukti efektif di lapangan.",
+          effectiveness_rating: 5,
+        }),
+      });
+      check(
+        "management evaluates and closes the report",
+        evaluate.status === 200 &&
+          String(evaluate.body?.report?.hse_status).toUpperCase() === "CLOSED" &&
+          String(evaluate.body?.action?.management_status).toUpperCase() === "EVALUATED",
+        evaluate.body?.error || `report=${evaluate.body?.report?.hse_status}`
+      );
+    }
+
+    // Notifications: the worker must have been told about every step.
+    const inbox = await call(sessions.worker.token, "/api/notifications");
+    const related = (inbox.body?.notifications || []).filter(
+      (n) => n.related_report_id === mine.id
+    );
+    check(
+      "worker receives workflow notifications",
+      related.length >= 2,
+      `${related.length} notifications for the probe report`
+    );
+
+    const mgmtInbox = await call(sessions.management.token, "/api/notifications");
+    check(
+      "management receives approval notifications",
+      (mgmtInbox.body?.notifications || []).some((n) => n.category === "APPROVAL"),
+      `${(mgmtInbox.body?.notifications || []).length} rows`
+    );
+
+    // ------------------------------------------------------------ coordination
+    const coord = await call(sessions.supervisor.token, "/api/coordination", {
+      method: "POST",
+      body: JSON.stringify({
+        to_role: "hse",
+        subject: "E2E probe coordination",
+        message: "Mohon verifikasi area probe sebelum pekerjaan dimulai.",
+        priority: "NORMAL",
+        zone_name: "Pit Utama",
+      }),
+    });
+    check("supervisor can send coordination", coord.status === 200 && coord.body?.request?.id, coord.body?.error || "");
+    const coordId = coord.body?.request?.id;
+
+    const workerCoord = await call(sessions.worker.token, "/api/coordination", {
+      method: "POST",
+      body: JSON.stringify({ to_role: "hse", subject: "x", message: "x" }),
+    });
+    check("worker cannot send coordination", workerCoord.status === 403, `status=${workerCoord.status}`);
+
+    if (coordId) {
+      const reply = await call(sessions.hse.token, "/api/coordination", {
+        method: "PATCH",
+        body: JSON.stringify({ id: coordId, status: "RESOLVED", response: "Sudah diverifikasi, aman." }),
+      });
+      check("HSE can reply and resolve coordination", reply.status === 200, reply.body?.error || "");
+    }
   }
 
   // ------------------------------------------------- conduct K3 inspection
@@ -175,6 +403,23 @@ async function main() {
     newInspection.body?.error || `inspection_id=${newInspection.body?.inspection?.id}`
   );
   const createdInspId = newInspection.body?.inspection?.id;
+  const findingAction = (newInspection.body?.created_actions || [])[0];
+
+  if (findingAction?.id) {
+    const approveFinding = await call(sessions.management.token, "/api/inspections", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: findingAction.id,
+        management_decision: "APPROVED",
+        management_notes: "Setujui temuan inspeksi untuk perbaikan.",
+      }),
+    });
+    check(
+      "management approves an inspection finding",
+      approveFinding.status === 200,
+      approveFinding.body?.error || ""
+    );
+  }
 
   const workerCreateInsp = await call(sessions.worker.token, "/api/inspections", {
     method: "POST",
@@ -201,7 +446,11 @@ async function main() {
   // Pick a ticket that still has room to move; a completed one is asserted
   // separately, because refusing to reopen a closed ticket is the correct
   // behaviour rather than a failure.
-  const ticket = tickets.find((t) => Number(t.stage_number) < 6);
+  const ticket = tickets.find(
+    (t) =>
+      Number(t.stage_number) < 6 &&
+      String(t.management_status || "").toUpperCase() === "APPROVED"
+  );
   const completed = tickets.find((t) => Number(t.stage_number) >= 6);
 
   if (ticket) {
@@ -227,7 +476,7 @@ async function main() {
     });
     check("worker cannot verify tickets", denied.status === 403, `status=${denied.status}`);
   } else {
-    check("corrective action advances", false, "no ticket left under stage 6 to advance");
+    check("corrective action advances", false, "no approved ticket under stage 6 to advance");
   }
 
   if (completed) {
@@ -295,12 +544,8 @@ async function main() {
   check("KPI payload is not fabricated", kpi.body?.kpis === undefined, "no hardcoded fallback block");
 
   // ------------------------------------------------------------------ cleanup
-  if (mine) {
-    const svc = createClient(URL_, process.env.SUPABASE_SERVICE_ROLE_KEY || KEY, {
-      auth: { persistSession: false },
-    });
-    await svc.from("hazard_reports").delete().eq("local_id", localId);
-  }
+  // hazard_reports has no DELETE policy, so only the inspection and warning
+  // probes can be removed from here. The e2e report remains for manual cleanup.
   if (warningId) {
     const svc = createClient(URL_, process.env.SUPABASE_SERVICE_ROLE_KEY || KEY, {
       auth: { persistSession: false },

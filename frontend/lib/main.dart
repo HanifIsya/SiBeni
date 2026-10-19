@@ -8,6 +8,7 @@ import 'core/auth_service.dart';
 import 'core/brand.dart';
 import 'core/location_service.dart';
 import 'core/network_service.dart';
+import 'core/notification_service.dart';
 import 'core/offline_sync_manager.dart';
 import 'core/theme.dart';
 import 'core/user_session.dart';
@@ -15,10 +16,13 @@ import 'features/auth_screen.dart';
 import 'features/emergency_screen.dart';
 import 'features/inspection_screen.dart';
 import 'features/insight_screen.dart';
+import 'features/management_evaluation_screen.dart';
+import 'features/notification_center.dart';
 import 'features/profile_edit_screen.dart';
 import 'features/quick_report_screen.dart';
 import 'features/report_review_screen.dart';
 import 'features/risk_map_screen.dart';
+import 'features/supervisor_coordination_screen.dart';
 import 'features/warning_manage_screen.dart';
 import 'features/settings_sheet.dart';
 import 'widgets/network_pill.dart';
@@ -97,16 +101,24 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    // Warm the GPS in the background so the first map/report is already live.
+    // Warm the GPS and the notification badge in the background so the first
+    // screen is already live after login.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(LocationService.instance.ensureFix());
+      unawaited(NotificationService.instance.refresh());
     });
   }
 
   /// Build the destination list for a role.
   ///
-  /// Worker: report + SOS only. Supervisor: verification + read-only insight.
-  /// HSE: report review + early warnings. Management: review + official metrics.
+  /// Worker    : Peta, Lapor, Darurat.
+  /// Supervisor: Peta, Lapor, Inspeksi, Koordinasi, Dashboard K3/ESG.
+  /// HSE       : Peta, Laporan, Inspeksi, Koordinasi, Dashboard K3/ESG.
+  /// Management: Peta, Laporan, Evaluasi, Koordinasi, Dashboard K3/ESG.
+  ///
+  /// HSE has no "Lapor" tab because HSE receives reports. Management has an
+  /// explicit evaluation console for approvals and closure. SOS remains one
+  /// tap away in the app-bar overflow and on the map for every role.
   static List<_Destination> _destinationsFor(AppRole role) {
     final items = <_Destination>[
       _Destination(
@@ -114,25 +126,31 @@ class _AppShellState extends State<AppShell> {
         Icons.explore_outlined,
         Icons.explore_rounded,
         (_) => RiskMapScreen(
-          onNavigateToReport: () => _AppShellBus.instance.go('Lapor'),
-          onNavigateToEmergency: () => _AppShellBus.instance.go('Darurat'),
+          onNavigateToReport: () => _AppShellBus.instance.report(),
+          onNavigateToEmergency: () => _AppShellBus.instance.emergency(),
         ),
       ),
-      _Destination(
+    ];
+
+    if (role.canFileReport) {
+      items.add(_Destination(
         'Lapor',
         Icons.add_circle_outline_rounded,
         Icons.add_circle_rounded,
         (_) => const QuickReportScreen(),
-      ),
-      _Destination(
+      ));
+    }
+
+    if (role == AppRole.worker) {
+      items.add(_Destination(
         'Darurat',
         Icons.sos_rounded,
         Icons.sos_rounded,
         (_) => const EmergencyScreen(),
-      ),
-    ];
+      ));
+    }
 
-    if (role.canVerifyTickets) {
+    if (role.canInspect) {
       items.add(_Destination(
         'Inspeksi',
         Icons.fact_check_outlined,
@@ -150,9 +168,27 @@ class _AppShellState extends State<AppShell> {
       ));
     }
 
+    if (role.canApproveActions) {
+      items.add(_Destination(
+        'Evaluasi',
+        Icons.approval_outlined,
+        Icons.approval_rounded,
+        (_) => const ManagementEvaluationScreen(),
+      ));
+    }
+
+    if (role.canCoordinate) {
+      items.add(_Destination(
+        'Koordinasi',
+        Icons.forum_outlined,
+        Icons.forum_rounded,
+        (_) => const SupervisorCoordinationScreen(),
+      ));
+    }
+
     if (role.canViewInsight) {
       items.add(_Destination(
-        'Insight',
+        'Dashboard',
         Icons.insights_outlined,
         Icons.insights_rounded,
         (_) => const InsightScreen(),
@@ -199,6 +235,24 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  void _openEmergency() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(
+            backgroundColor: AppTheme.brandDeep,
+            foregroundColor: Colors.white,
+            title: const Text(
+              'Tanggap Darurat',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          body: const EmergencyScreen(),
+        ),
+      ),
+    );
+  }
+
   AppRole get _currentRole =>
       UserSession.instance.currentUser.value?.role ?? AppRole.worker;
 
@@ -214,6 +268,18 @@ class _AppShellState extends State<AppShell> {
         // Keep the tab bar within a comfortable thumb span.
         final safeIndex = _index.clamp(0, primary.length - 1);
         _AppShellBus.instance.go = _goTo;
+        _AppShellBus.instance.emergency = _openEmergency;
+        _AppShellBus.instance.report = () {
+          if (_currentRole.canFileReport) {
+            _goTo('Lapor');
+          } else if (_currentRole.canReviewReports) {
+            _goTo('Laporan');
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Menu laporan tidak tersedia untuk peran ini.')),
+            );
+          }
+        };
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -226,8 +292,11 @@ class _AppShellState extends State<AppShell> {
             return Scaffold(
               appBar: _BrandAppBar(
                 user: user,
+                role: role,
                 onProfile: () => _goTo('Profil'),
                 onSettings: () => showSettingsSheet(context),
+                onEmergency: _openEmergency,
+                onNotifications: () => showNotificationCenter(context),
               ),
               body: Row(
                 children: [
@@ -260,6 +329,8 @@ class _AppShellBus {
   static final instance = _AppShellBus._();
   _AppShellBus._();
   late void Function(String label) go;
+  late void Function() emergency;
+  late void Function() report;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,47 +339,174 @@ class _AppShellBus {
 class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
   const _BrandAppBar({
     required this.user,
+    required this.role,
     required this.onProfile,
     required this.onSettings,
+    required this.onEmergency,
+    required this.onNotifications,
   });
 
   final UserProfile? user;
+  final AppRole role;
   final VoidCallback onProfile;
   final VoidCallback onSettings;
+  final VoidCallback onEmergency;
+  final VoidCallback onNotifications;
 
   @override
   Size get preferredSize => const Size.fromHeight(58);
+
+  /// A tinted dark app bar makes the signed-in role recognisable at a glance
+  /// without breaking the industrial palette. Worker keeps the original navy.
+  static Color _tintFor(AppRole role) {
+    switch (role) {
+      case AppRole.worker:
+        return AppTheme.brandDeep;
+      case AppRole.supervisor:
+        return Color.alphaBlend(
+          const Color(0xFF0E7490).withValues(alpha: 0.34),
+          AppTheme.brandDeep,
+        );
+      case AppRole.hse:
+        return Color.alphaBlend(
+          const Color(0xFF12805C).withValues(alpha: 0.34),
+          AppTheme.brandDeep,
+        );
+      case AppRole.management:
+        return Color.alphaBlend(
+          const Color(0xFF6D28D9).withValues(alpha: 0.34),
+          AppTheme.brandDeep,
+        );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return AppBar(
       toolbarHeight: 58,
       titleSpacing: 14,
-      backgroundColor: AppTheme.brandDeep,
+      backgroundColor: _tintFor(role),
       foregroundColor: Colors.white,
       title: _IdentityBlock(user: user),
       actions: [
+        _NotificationBell(onTap: onNotifications),
         Padding(
-          padding: const EdgeInsets.only(right: 6),
+          padding: const EdgeInsets.only(right: 4),
           child: Center(
             child: NetworkPill(compact: true, onTap: () => showNetworkSheet(context)),
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(right: 6),
+          padding: const EdgeInsets.only(right: 2),
           child: Center(child: _AvatarButton(user: user, onTap: onProfile)),
         ),
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: Center(
-            child: IconButton(
-              icon: const Icon(Icons.tune_rounded, size: 20, color: AppTheme.onDarkMuted),
-              tooltip: 'Pengaturan & Akun',
-              onPressed: onSettings,
-            ),
+        PopupMenuButton<String>(
+          tooltip: 'Menu lainnya',
+          icon: const Icon(
+            Icons.more_vert_rounded,
+            size: 21,
+            color: AppTheme.onDarkMuted,
           ),
+          color: AppTheme.surface,
+          onSelected: (value) {
+            if (value == 'emergency') {
+              onEmergency();
+            } else if (value == 'settings') {
+              onSettings();
+            }
+          },
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'emergency',
+              child: Row(
+                children: [
+                  Icon(Icons.sos_rounded, size: 18, color: AppTheme.riskCritical),
+                  SizedBox(width: 9),
+                  Text(
+                    'Tanggap Darurat',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.riskCritical,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'settings',
+              child: Row(
+                children: [
+                  Icon(Icons.tune_rounded, size: 18, color: AppTheme.inkMuted),
+                  SizedBox(width: 9),
+                  Text(
+                    'Pengaturan & Akun',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.ink,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ],
+    );
+  }
+}
+
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: NotificationService.instance.unread,
+      builder: (context, unread, _) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            IconButton(
+              icon: const Icon(
+                Icons.notifications_none_rounded,
+                size: 21,
+                color: AppTheme.onDarkMuted,
+              ),
+              tooltip: 'Notifikasi',
+              onPressed: onTap,
+            ),
+            if (unread > 0)
+              Positioned(
+                top: 9,
+                right: 9,
+                child: IgnorePointer(
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.riskCritical,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppTheme.brandDeep, width: 1.5),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      unread > 99 ? '99+' : '$unread',
+                      style: const TextStyle(
+                        fontSize: 8,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

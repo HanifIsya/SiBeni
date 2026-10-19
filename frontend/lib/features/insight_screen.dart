@@ -84,7 +84,13 @@ class _InsightScreenState extends State<InsightScreen> {
       onRefresh: _load,
       slivers: [
         if (role != AppRole.worker) ...[
-          RoleWorkspaceBanner(role: role),
+          RoleWorkspaceBanner(
+            role: role,
+            variant: RoleBannerVariant.compact,
+            note: period == null
+                ? 'Belum ada data pelaporan'
+                : 'Periode ${DateFormat('MMM yyyy').format(period)}',
+          ),
           const SizedBox(height: AppTheme.lg),
         ],
         SectionHeader(

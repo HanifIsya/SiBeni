@@ -7,6 +7,7 @@ import '../core/auth_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
 import '../widgets/sb_card.dart';
 
@@ -83,7 +84,14 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       setState(() {
         _uploading = false;
         if (path != null) {
+          // Drop the cached copy of the previous photo so the new picture is
+          // the one on screen — on this account, and only on this account.
+          final previous = _avatarUrl;
           _avatarUrl = path;
+          if (previous != null && previous.isNotEmpty) {
+            PaintingBinding.instance.imageCache
+                .evict(NetworkImage(previous));
+          }
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               backgroundColor: AppTheme.online,
@@ -208,7 +216,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     return AdaptivePage(
       maxWidth: 560,
       slivers: [
-        // Top Bar Header with clear Back Button
+        // Minimal account header: the screen is about the person, so the
+        // header only says what the screen is. Everything else lives in the
+        // cards below.
         Padding(
           padding: const EdgeInsets.only(bottom: AppTheme.md),
           child: Row(
@@ -218,26 +228,16 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 tooltip: 'Kembali',
                 onPressed: () => Navigator.maybePop(context),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Profil Pengguna',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.2,
-                        color: AppTheme.ink,
-                      ),
-                    ),
-                    SizedBox(height: 1),
-                    Text(
-                      'Identitas karyawan dan pengaturan akun',
-                      style: TextStyle(fontSize: 12, color: AppTheme.inkMuted),
-                    ),
-                  ],
+                child: Text(
+                  'Profil',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
+                    color: AppTheme.ink,
+                  ),
                 ),
               ),
             ],
@@ -304,7 +304,13 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
+              Text(
+                'Foto ini hanya berlaku untuk akun Anda.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11, color: AppTheme.inkFaint),
+              ),
+              const SizedBox(height: 10),
               GestureDetector(
                 onTap: _uploading ? null : _pickAvatar,
                 child: Container(
@@ -445,8 +451,11 @@ class _Initials extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Tint the fallback avatar with the role colour so two accounts are never
+    // mistaken for each other, even before a photo is uploaded.
+    final color = RoleWorkspaceBanner.colorFor(user?.role ?? AppRole.worker);
     return Container(
-      color: AppTheme.brand,
+      color: color,
       alignment: Alignment.center,
       child: Text(
         user?.initials ?? '?',

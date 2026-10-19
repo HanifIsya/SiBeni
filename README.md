@@ -112,6 +112,14 @@
     - Setiap peran memiliki warna app bar, banner ruang kerja, langkah kerja, dan susunan navigasi yang berbeda, meskipun formulir laporan tetap sama.
     - Pekerja (navy, Peta/Lapor/Darurat) · Supervisor (cyan, Inspeksi/Koordinasi/laksanakan tindakan/Dashboard) · HSE (hijau, verifikasi/susun tindakan) · Manajemen (violet, setujui/evaluasi/tutup laporan).
     - SOS tetap satu ketukan dari menu overflow dan peta untuk peran non-pekerja.
+    - Panel peran penuh hanya tampil di layar beranda; layar kerja memakai **strip ringkas satu baris berisi data langsung** (mis. "2 menunggu persetujuan · 1 siap dievaluasi").
+
+12. **Tampilan Minimalis & Ramah Medan — baru**
+    - Kartu memakai siluet **chamfer** (sudut terpotong 10 px) dengan border tegas dan bayangan dangkal, bukan kartu bulat ber-gradient yang terbaca seperti templat.
+    - Header app bar dan header akun dirampingkan: tanpa chip nomor pegawai, tanpa subjudul panjang.
+    - Satu wordmark "SOS" pada tombol darurat (tidak lagi dua tulisan), dan ikon sirene di peta, tab, serta menu overflow.
+    - Tombol "Keluar Akun" hanya ada di tab **Profil** — tidak lagi di sheet pengaturan atau sheet profil.
+    - Layar yang gagal memuat data menampilkan status sinkronisasi + tombol **Coba Lagi**, bukan layar kosong yang menyesatkan.
 
 ---
 
@@ -156,6 +164,7 @@ Verifikasi otomatis tersedia di `backend/e2e-writepaths.mjs` — **46 pemeriksaa
    - `supabase/migrations/004_surabaya_site_and_write_paths.sql` — relokasi site ke Surabaya, perbaikan jalur tulis, trigger pemicu, bucket avatar, dan penyesuaian peran.
    - `supabase/migrations/005_role_invite_code_authorization.sql` — otorisasi pendaftaran peran via invite code (`SPV2026`, `HSE2026`, `MGT2026`).
    - `supabase/migrations/006_role_workflow_management_notifications.sql` — alur kerja per peran: persetujuan & evaluasi Manajemen pada tindakan korektif, tabel `notifications`, kanal `coordination_requests`, penjaga kolom keputusan Manajemen, dan indeks register. Bersifat aditif — data lama tetap utuh.
+   - `supabase/migrations/007_avatar_ownership.sql` — isolasi foto profil: policy storage dikunci ke pemilik folder akun, data awal dibersihkan dari foto bersama antar akun.
 3. Masukkan data awal dengan menjalankan:
    - `supabase/seed.sql`
 
@@ -179,7 +188,7 @@ Target: **46/46 pemeriksaan lulus**, termasuk penolakan `403` untuk setiap tinda
 cd frontend
 flutter pub get
 flutter analyze                 # harus: No issues found!
-flutter test                    # 76 uji: tata letak + logika inti + matriks peran
+flutter test                    # 82 uji: tata letak + logika inti + matriks peran + regresi UX
 flutter build apk --release
 # → build/app/outputs/flutter-apk/app-release.apk
 ```

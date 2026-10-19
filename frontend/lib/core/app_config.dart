@@ -21,8 +21,12 @@ class AppConfig {
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnZG5yc25ieHdxcm91aWdyc2tiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIxMzU4MjUsImV4cCI6MjEwNzcxMTgyNX0.GidEFVlR4sRH4babQ7sIGRDmNrWRYCOtQ5s_rXvqOH8';
 
   /// Network timeouts — tuned for intermittent site connectivity.
-  static const Duration shortTimeout = Duration(seconds: 8);
-  static const Duration longTimeout = Duration(seconds: 15);
+  ///
+  /// The hosting tier is a free plan: a cold start can take longer than a
+  /// normal request window, so the read timeout is generous and the API layer
+  /// retries once before giving up.
+  static const Duration shortTimeout = Duration(seconds: 12);
+  static const Duration longTimeout = Duration(seconds: 25);
 
   static String api(String path) => '$apiBaseUrl$path';
 }

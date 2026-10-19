@@ -17,12 +17,28 @@ class AuthService {
 
   /// The caller's access token, forwarded to the B2B API so that Row Level
   /// Security is evaluated against this user rather than `anon`.
-  String? get accessToken => client.auth.currentSession?.accessToken;
+  ///
+  /// Reads are defensive: before [initialize] has run there is no client yet,
+  /// and a widget that asks for the token (or a test that never signs in) must
+  /// get `null` instead of an exception.
+  String? get accessToken {
+    try {
+      return client.auth.currentSession?.accessToken;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// The Supabase auth id (a UUID), which is what `hazard_reports.reporter_id`
   /// and `emergency_sos_logs.worker_id` expect. The employee number is NOT a
   /// valid value for those columns.
-  String? get userId => client.auth.currentUser?.id;
+  String? get userId {
+    try {
+      return client.auth.currentUser?.id;
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<void> initialize() async {
     await Supabase.initialize(

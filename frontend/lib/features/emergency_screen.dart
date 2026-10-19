@@ -386,14 +386,16 @@ class _SosHoldButton extends StatelessWidget {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.sos_rounded, color: Colors.white, size: 44),
-                              const SizedBox(height: 2),
+                              // A single, unambiguous wordmark. The SOS glyph
+                              // plus the word "SOS" underneath read as two
+                              // separate labels and looked like a mistake.
                               const Text(
                                 'SOS',
                                 style: TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 26,
                                   fontWeight: FontWeight.w900,
-                                  letterSpacing: 2,
+                                  letterSpacing: 4,
+                                  height: 1.1,
                                   color: Colors.white,
                                 ),
                               ),

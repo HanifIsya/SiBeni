@@ -33,6 +33,10 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
   bool _loading = true;
   String _filter = 'SUBMITTED';
 
+  /// Set when the register could not be loaded, so an empty list is never
+  /// mistaken for "there are no reports".
+  String? _loadError;
+
   @override
   void initState() {
     super.initState();
@@ -40,12 +44,29 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final result = await ApiService.instance.getReports(status: _filter);
-    if (!mounted) return;
     setState(() {
-      _reports = result.reports;
-      _counts = result.counts;
+      _loading = true;
+      _loadError = null;
+    });
+    final read = await ApiService.instance.getReportsRead(status: _filter);
+    if (!mounted) return;
+    final data = read.data;
+    setState(() {
+      if (data == null) {
+        _reports = const [];
+        _counts = const {};
+      } else {
+        _reports = (data['reports'] is List)
+            ? (data['reports'] as List)
+                .whereType<Map<String, dynamic>>()
+                .toList()
+            : const [];
+        final counts = data['counts'];
+        _counts = counts is Map
+            ? counts.map((k, v) => MapEntry(k.toString(), v))
+            : const {};
+      }
+      _loadError = read.error;
       _loading = false;
     });
   }
@@ -84,7 +105,14 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
-        RoleWorkspaceBanner(role: role),
+        RoleWorkspaceBanner(
+          role: role,
+          variant: RoleBannerVariant.compact,
+          note: _counts.isEmpty
+              ? null
+              : '${_counts['submitted'] ?? 0} baru · '
+                  '${_counts['in_review'] ?? 0} ditinjau',
+        ),
         const SizedBox(height: AppTheme.lg),
         SectionHeader(
           title: role == AppRole.management
@@ -106,6 +134,8 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
         const SizedBox(height: AppTheme.lg),
         if (_loading)
           const _ReviewSkeleton()
+        else if (_loadError != null && _reports.isEmpty)
+          _RegisterErrorCard(message: _loadError!, onRetry: _load)
         else if (_reports.isEmpty)
           EmptyState(
             icon: _filter == 'SUBMITTED'
@@ -1294,6 +1324,58 @@ class _ReviewSkeleton extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Shown when the register could not be loaded at all.
+class _RegisterErrorCard extends StatelessWidget {
+  const _RegisterErrorCard({required this.message, required this.onRetry});
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SbCard(
+      accent: AppTheme.riskMedium,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.cloud_off_rounded, size: 18, color: AppTheme.riskMedium),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'REGISTER BELUM TERSINKRON',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.eyebrow(color: AppTheme.riskMedium),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            style: const TextStyle(
+              fontSize: 12.5,
+              height: 1.5,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.inkMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SbButton(
+            label: 'Coba Lagi',
+            icon: Icons.refresh_rounded,
+            height: 46,
+            expand: false,
+            onPressed: onRetry,
+          ),
+        ],
       ),
     );
   }

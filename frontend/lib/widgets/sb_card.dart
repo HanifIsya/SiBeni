@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import 'chamfer.dart';
 import 'pressable.dart';
 
 /// The single card primitive used across the product.
@@ -8,6 +9,10 @@ import 'pressable.dart';
 /// One elevation language, one radius language, one border language — that
 /// restraint is what makes the interface read as a system rather than a pile
 /// of widgets.
+///
+/// The silhouette is deliberately angular: a 10 px chamfer on the trailing-top
+/// corner instead of a fully rounded pill. Flat cards with soft shadows read as
+/// "template"; a cut corner reads as equipment panel.
 class SbCard extends StatelessWidget {
   const SbCard({
     super.key,
@@ -19,6 +24,7 @@ class SbCard extends StatelessWidget {
     this.elevated = false,
     this.borderColor,
     this.clip = false,
+    this.cut = 10,
   });
 
   final Widget child;
@@ -30,19 +36,35 @@ class SbCard extends StatelessWidget {
   final Color? borderColor;
   final bool clip;
 
+  /// Size of the cut corner. Set to 0 for a plain rectangle.
+  final double cut;
+
   @override
   Widget build(BuildContext context) {
     final accentColor = accent;
+    final border = ChamferBorder(
+      color: borderColor ?? AppTheme.hairline,
+      width: 1,
+      radius: 16,
+      cut: cut,
+    );
 
-    final content = Container(
-      decoration: BoxDecoration(
+    final content = DecoratedBox(
+      decoration: ShapeDecoration(
         color: color ?? AppTheme.surface,
-        borderRadius: AppTheme.brLg,
-        border: Border.all(color: borderColor ?? AppTheme.hairline),
-        boxShadow: elevated ? AppTheme.shadowLift : AppTheme.shadowSoft,
+        shape: border,
+        shadows: elevated
+            ? AppTheme.shadowLift
+            : const [
+                BoxShadow(
+                  color: Color(0x0D0B1622),
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
+              ],
       ),
-      child: ClipRRect(
-        borderRadius: AppTheme.brLg,
+      child: ClipPath(
+        clipper: ChamferClipper(radius: 16, cut: cut),
         child: Stack(
           children: [
             if (accentColor != null)
@@ -50,11 +72,11 @@ class SbCard extends StatelessWidget {
                 start: 0,
                 top: 0,
                 bottom: 0,
-                child: Container(width: 4, color: accentColor),
+                child: Container(width: 3, color: accentColor),
               ),
             Padding(
               padding: accentColor != null
-                  ? padding.add(const EdgeInsetsDirectional.only(start: 4))
+                  ? padding.add(const EdgeInsetsDirectional.only(start: 3))
                   : padding,
               child: child,
             ),

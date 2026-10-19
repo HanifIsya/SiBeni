@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/theme.dart';
+import 'chamfer.dart';
 import 'pressable.dart';
 
 enum SbButtonVariant { primary, secondary, danger, ghost }
@@ -60,19 +61,14 @@ class SbButton extends StatelessWidget {
       height: height,
       width: expand ? double.infinity : null,
       padding: EdgeInsets.symmetric(horizontal: expand ? 16 : 22),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: bordered ? AppTheme.surface : base,
-        borderRadius: AppTheme.brMd,
-        border: bordered ? Border.all(color: base.withValues(alpha: 0.5), width: 1.4) : null,
-        boxShadow: variant == SbButtonVariant.ghost || bordered || tone != null
-            ? null
-            : [
-                BoxShadow(
-                  color: base.withValues(alpha: 0.28),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+        shape: ChamferBorder(
+          color: bordered ? base.withValues(alpha: 0.5) : base,
+          width: bordered ? 1.4 : 1,
+          radius: 12,
+          cut: 6,
+        ),
       ),
       child: Row(
         mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,

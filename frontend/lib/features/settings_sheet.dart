@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/app_config.dart';
-import '../core/auth_service.dart';
 import '../core/location_service.dart';
 import '../core/network_service.dart';
 import '../core/offline_sync_manager.dart';
@@ -106,9 +105,7 @@ class _ProfileSheet extends StatelessWidget {
     final user = UserSession.instance.currentUser.value;
     return _Sheet(
       title: user?.fullName ?? 'Pengguna',
-      subtitle: user == null
-          ? null
-          : '${user.roleDisplayName} · ${user.employeeId}\n${user.workZone}',
+      subtitle: user?.roleDisplayName,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -136,16 +133,26 @@ class _ProfileSheet extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          SbButton(
-            label: 'Keluar Akun',
-            icon: Icons.logout_rounded,
-            variant: SbButtonVariant.ghost,
-            tone: AppTheme.riskCritical,
-            onPressed: () async {
-              Navigator.pop(context);
-              await AuthService.instance.signOut();
-            },
+          const SizedBox(height: 10),
+          // Signing out lives on the Profil tab only. One place, one meaning —
+          // a second copy in a sheet is how users lose track of which one
+          // actually ends the session.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Icon(Icons.logout_rounded, size: 14, color: AppTheme.inkFaint),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Keluar akun tersedia di tab Profil.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    height: 1.35,
+                    color: AppTheme.inkFaint,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -404,7 +411,7 @@ class _SettingsSheet extends StatelessWidget {
                     _Row(
                       icon: Icons.info_outline_rounded,
                       label: 'Versi aplikasi',
-                      value: '1.4.0',
+                      value: '1.5.0',
                     ),
                     _Divider(),
                     _Row(
@@ -416,33 +423,6 @@ class _SettingsSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              SbButton(
-                label: 'Keluar Akun (Log Out)',
-                icon: Icons.logout_rounded,
-                variant: SbButtonVariant.danger,
-                onPressed: () async {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Keluar Akun?'),
-                      content: const Text('Anda akan keluar dari sesi ini dan kembali ke halaman login.'),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
-                        FilledButton(
-                          style: FilledButton.styleFrom(backgroundColor: AppTheme.riskCritical),
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('Keluar'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirm == true) {
-                    if (context.mounted) Navigator.maybePop(context);
-                    await AuthService.instance.signOut();
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
               Text(
                 'SI BENI — ${AppConfig.appTagline}',
                 textAlign: TextAlign.center,

@@ -32,6 +32,13 @@ class _InspectionScreenState extends State<InspectionScreen> {
   bool _loading = true;
   String _filter = 'all';
 
+  /// Set when the last load could not reach the server, so the screen can say
+  /// so instead of pretending the site has no findings.
+  String? _loadError;
+
+  /// True when the payload came from the on-device cache.
+  bool _fromCache = false;
+
   /// Ticket currently being advanced, so only that button shows a spinner.
   String? _busyId;
 
@@ -42,11 +49,20 @@ class _InspectionScreenState extends State<InspectionScreen> {
   }
 
   Future<void> _load() async {
-    final data = await ApiService.instance.getInspections();
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
+
+    final read = await ApiService.instance.getInspectionsRead();
     if (!mounted) return;
     setState(() {
-      _actions = _listOf(data['corrective_actions']);
-      _inspections = _listOf(data['inspections']);
+      _actions = _listOf(read.data?['corrective_actions']);
+      _inspections = _listOf(read.data?['inspections']);
+      _loadError = read.error;
+      _fromCache = read.fromCache;
       _loading = false;
     });
   }
@@ -176,7 +192,13 @@ class _InspectionScreenState extends State<InspectionScreen> {
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
-        RoleWorkspaceBanner(role: role),
+        RoleWorkspaceBanner(
+          role: role,
+          variant: RoleBannerVariant.compact,
+          note: _actions.isEmpty
+              ? null
+              : '${_actions.where((a) => _stage(a) < 6).length} temuan aktif',
+        ),
         const SizedBox(height: AppTheme.lg),
         SectionHeader(
           title: role == AppRole.hse ? 'Inspeksi & Verifikasi' : 'Inspeksi K3',
@@ -208,38 +230,96 @@ class _InspectionScreenState extends State<InspectionScreen> {
           ),
         ),
 
-        if (_loading)
-          const _TicketSkeleton()
-        else if (_visible.isEmpty)
-          const EmptyState(
-            icon: Icons.task_alt_rounded,
-            title: 'Tidak ada tiket aktif',
-            message: 'Semua tindakan korektif sudah ditutup.',
+        if (_loadError != null && _actions.isEmpty)
+          _LoadErrorCard(
+            message: _loadError!,
+            onRetry: _load,
           )
-        else
-          for (final ticket in _visible)
+        else ...[
+          if (_loadError != null)
             Padding(
               padding: const EdgeInsets.only(bottom: AppTheme.md),
-              child: _TicketCard(
-                ticket: ticket,
-                stage: _stage(ticket),
-                stages: _stages,
-                role: role,
-                managementStatus: _managementStatus(ticket),
-                canAdvance: _canAdvance(ticket, role),
-                advanceLabel: _advanceLabel(ticket, role),
-                busy: _busyId == (ticket['id'] ?? '').toString(),
-                onAdvance: () => _advance(ticket),
+              child: _OfflineNotice(
+                message: _fromCache
+                    ? 'Data terakhir yang tersimpan di perangkat ini.'
+                    : _loadError!,
               ),
             ),
+          if (_actions.isNotEmpty) ...[
+            _StatStrip(
+              active: _actions.where((a) => _stage(a) < 6).length,
+              pending: _actions
+                  .where((a) => _managementStatus(a) == 'PENDING')
+                  .length,
+              evaluation: _actions
+                  .where(
+                    (a) =>
+                        _stage(a) >= 6 && _managementStatus(a) == 'APPROVED',
+                  )
+                  .length,
+              done: _actions
+                  .where((a) => _managementStatus(a) == 'EVALUATED')
+                  .length,
+            ),
+            const SizedBox(height: AppTheme.md),
+          ],
+          if (_loading)
+            const _TicketSkeleton()
+          else if (_visible.isEmpty)
+            EmptyState(
+              icon: Icons.fact_check_outlined,
+              title: role == AppRole.hse
+                  ? 'Belum ada temuan yang perlu diverifikasi'
+                  : 'Belum ada tiket tindakan korektif',
+              message: role == AppRole.hse
+                  ? 'Temuan inspeksi yang dibuat Supervisor akan muncul di sini untuk diverifikasi, lalu disusunkan sebagai tindakan korektif.'
+                  : 'Temuan inspeksi otomatis menjadi tiket tindakan korektif setelah inspection lapangan dikirim.',
+              action: canInspect
+                  ? SbButton(
+                      label: 'Mulai Inspeksi',
+                      icon: Icons.add_task_rounded,
+                      height: 46,
+                      expand: false,
+                      onPressed: _openNewInspectionSheet,
+                    )
+                  : null,
+            )
+          else
+            for (final ticket in _visible)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppTheme.md),
+                child: _TicketCard(
+                  ticket: ticket,
+                  stage: _stage(ticket),
+                  stages: _stages,
+                  role: role,
+                  managementStatus: _managementStatus(ticket),
+                  canAdvance: _canAdvance(ticket, role),
+                  advanceLabel: _advanceLabel(ticket, role),
+                  busy: _busyId == (ticket['id'] ?? '').toString(),
+                  onAdvance: () => _advance(ticket),
+                ),
+              ),
+        ],
 
-        if (_inspections.isNotEmpty) ...[
-          const SizedBox(height: AppTheme.sm),
-          const SectionHeader(
-            title: 'Riwayat Inspeksi',
-            icon: Icons.history_rounded,
-            dense: true,
-          ),
+        const SizedBox(height: AppTheme.sm),
+        const SectionHeader(
+          title: 'Riwayat Inspeksi',
+          icon: Icons.history_rounded,
+          dense: true,
+        ),
+
+        if (_loading)
+          const _TicketSkeleton()
+        else if (_inspections.isEmpty)
+          const EmptyState(
+            icon: Icons.assignment_outlined,
+            title: 'Belum ada riwayat inspeksi',
+            message:
+                'Setiap inspeksi lapangan yang dikirim akan tercatat di sini beserta jumlah butir yang lulus.',
+            compact: true,
+          )
+        else
           SbCard(
             child: Column(
               children: List.generate(_inspections.length, (i) {
@@ -300,8 +380,198 @@ class _InspectionScreenState extends State<InspectionScreen> {
               }),
             ),
           ),
-        ],
       ],
+    );
+  }
+}
+
+/// Four counters that answer "where does the K3 work stand right now?".
+class _StatStrip extends StatelessWidget {
+  const _StatStrip({
+    required this.active,
+    required this.pending,
+    required this.evaluation,
+    required this.done,
+  });
+
+  final int active;
+  final int pending;
+  final int evaluation;
+  final int done;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = <({String label, int value, Color color})>[
+      (label: 'Temuan aktif', value: active, color: AppTheme.brand),
+      (label: 'Menunggu persetujuan', value: pending, color: const Color(0xFF6D28D9)),
+      (label: 'Menunggu evaluasi', value: evaluation, color: AppTheme.riskMedium),
+      (label: 'Selesai', value: done, color: AppTheme.online),
+    ];
+
+    return SbCard(
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.md, vertical: 12),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final compact = c.maxWidth < 380;
+          final stats = items
+              .map(
+                (i) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${i.value}',
+                      style: TextStyle(
+                        fontSize: 20,
+                        height: 1.1,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
+                        color: i.color,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      i.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        height: 1.25,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.inkMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+              .toList();
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var row = 0; row < 2; row++)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: row == 0 ? 12 : 0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: stats[row * 2]),
+                        const SizedBox(width: 12),
+                        Expanded(child: stats[row * 2 + 1]),
+                      ],
+                    ),
+                  ),
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < stats.length; i++) ...[
+                if (i > 0)
+                  Container(
+                    width: 1,
+                    height: 34,
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    color: AppTheme.hairline,
+                  ),
+                Expanded(child: stats[i]),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Shown when the register could not be loaded at all.
+class _LoadErrorCard extends StatelessWidget {
+  const _LoadErrorCard({required this.message, required this.onRetry});
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SbCard(
+      accent: AppTheme.riskMedium,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.cloud_off_rounded, size: 18, color: AppTheme.riskMedium),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'DATA BELUM TERSINKRON',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.eyebrow(color: AppTheme.riskMedium),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            style: const TextStyle(
+              fontSize: 12.5,
+              height: 1.5,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.inkMuted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SbButton(
+            label: 'Coba Lagi',
+            icon: Icons.refresh_rounded,
+            height: 46,
+            expand: false,
+            onPressed: onRetry,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin notice that the numbers on screen come from the device cache.
+class _OfflineNotice extends StatelessWidget {
+  const _OfflineNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.riskMediumBg,
+        borderRadius: AppTheme.brSm,
+        border: Border.all(color: AppTheme.riskMedium.withValues(alpha: 0.30)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.wifi_off_rounded, size: 15, color: AppTheme.riskMedium),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Menampilkan data tersimpan di perangkat. $message',
+              style: const TextStyle(
+                fontSize: 11.5,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.riskMedium,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

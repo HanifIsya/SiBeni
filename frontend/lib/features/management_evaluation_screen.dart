@@ -145,7 +145,14 @@ class _ManagementEvaluationScreenState extends State<ManagementEvaluationScreen>
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
-        const RoleWorkspaceBanner(role: AppRole.management),
+        RoleWorkspaceBanner(
+          role: role,
+          variant: RoleBannerVariant.compact,
+          note: _counts.isEmpty
+              ? null
+              : '${_counts['pending_approval'] ?? 0} menunggu persetujuan · '
+                  '${_counts['waiting_evaluation'] ?? 0} siap dievaluasi',
+        ),
         const SizedBox(height: AppTheme.lg),
         const SectionHeader(
           title: 'Konsol Evaluasi Manajemen',

@@ -33,6 +33,9 @@ class _SupervisorCoordinationScreenState
   String _filter = 'open';
   String? _busyId;
 
+  /// Set when the channel could not be loaded.
+  String? _loadError;
+
   @override
   void initState() {
     super.initState();
@@ -40,12 +43,29 @@ class _SupervisorCoordinationScreenState
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final data = await ApiService.instance.getCoordination();
-    if (!mounted) return;
     setState(() {
-      _requests = data.requests;
-      _counts = data.counts;
+      _loading = true;
+      _loadError = null;
+    });
+    final read = await ApiService.instance.getCoordinationRead();
+    if (!mounted) return;
+    final data = read.data;
+    setState(() {
+      if (data == null) {
+        _requests = const [];
+        _counts = const {};
+      } else {
+        _requests = (data['requests'] is List)
+            ? (data['requests'] as List)
+                .whereType<Map<String, dynamic>>()
+                .toList()
+            : const [];
+        final counts = data['counts'];
+        _counts = counts is Map
+            ? counts.map((k, v) => MapEntry(k.toString(), v))
+            : const {};
+      }
+      _loadError = read.error;
       _loading = false;
     });
   }
@@ -133,7 +153,14 @@ class _SupervisorCoordinationScreenState
     return AdaptivePage(
       onRefresh: _load,
       slivers: [
-        RoleWorkspaceBanner(role: role),
+        RoleWorkspaceBanner(
+          role: role,
+          variant: RoleBannerVariant.compact,
+          note: _counts.isEmpty
+              ? null
+              : '${_counts['open'] ?? 0} terbuka · '
+                  '${_counts['needs_my_response'] ?? 0} perlu balasan',
+        ),
         const SizedBox(height: AppTheme.lg),
         SectionHeader(
           title: title,
@@ -157,6 +184,20 @@ class _SupervisorCoordinationScreenState
         const SizedBox(height: AppTheme.lg),
         if (_loading)
           const _CoordinationSkeleton()
+        else if (_loadError != null && _requests.isEmpty)
+          EmptyState(
+            icon: Icons.cloud_off_rounded,
+            title: 'Kanal koordinasi belum tersinkron',
+            message: '$_loadError',
+            compact: true,
+            action: SbButton(
+              label: 'Coba Lagi',
+              icon: Icons.refresh_rounded,
+              height: 44,
+              expand: false,
+              onPressed: _load,
+            ),
+          )
         else if (_visible.isEmpty)
           EmptyState(
             icon: Icons.forum_outlined,

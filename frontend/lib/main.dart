@@ -26,6 +26,7 @@ import 'features/supervisor_coordination_screen.dart';
 import 'features/warning_manage_screen.dart';
 import 'features/settings_sheet.dart';
 import 'widgets/network_pill.dart';
+import 'widgets/role_workspace.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -144,8 +145,8 @@ class _AppShellState extends State<AppShell> {
     if (role == AppRole.worker) {
       items.add(_Destination(
         'Darurat',
-        Icons.sos_rounded,
-        Icons.sos_rounded,
+        Icons.crisis_alert_rounded,
+        Icons.crisis_alert_rounded,
         (_) => const EmergencyScreen(),
       ));
     }
@@ -420,7 +421,7 @@ class _BrandAppBar extends StatelessWidget implements PreferredSizeWidget {
               value: 'emergency',
               child: Row(
                 children: [
-                  Icon(Icons.sos_rounded, size: 18, color: AppTheme.riskCritical),
+                  Icon(Icons.crisis_alert_rounded, size: 18, color: AppTheme.riskCritical),
                   SizedBox(width: 9),
                   Text(
                     'Tanggap Darurat',
@@ -512,6 +513,11 @@ class _NotificationBell extends StatelessWidget {
 }
 
 /// Wordmark + identity line for the app bar.
+///
+/// Deliberately minimal: the mark, the product name, the role, and the name of
+/// the person signed in. The employee number used to sit here as a third chip
+/// and pushed the name off-screen on narrow phones; it belongs on the account
+/// screen, not in the chrome.
 class _IdentityBlock extends StatelessWidget {
   const _IdentityBlock({required this.user});
   final UserProfile? user;
@@ -522,15 +528,9 @@ class _IdentityBlock extends StatelessWidget {
       builder: (context, constraints) {
         // The mark is the one element that must never be dropped — unless the
         // slot is narrower than the mark itself.
-        const markSize = 34.0;
-        const gap = 10.0;
+        const markSize = 32.0;
+        const gap = 9.0;
         if (constraints.maxWidth < markSize + gap) return const SizedBox.shrink();
-
-        final budget = constraints.maxWidth - markSize - gap;
-
-        // Display the employee ID chip if space permits; the full name line
-        // is always shown and gracefully ellipsizes when space is tight.
-        final showChip = user != null && budget >= 90;
 
         return Row(
           mainAxisSize: MainAxisSize.max,
@@ -543,46 +543,17 @@ class _IdentityBlock extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          AppConfig.appName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.1,
-                            color: Colors.white,
-                            height: 1.1,
-                          ),
-                        ),
-                      ),
-                      if (showChip) ...[
-                        const SizedBox(width: 7),
-                        Flexible(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              user!.employeeId,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTheme.mono(
-                                size: 9.5,
-                                weight: FontWeight.w700,
-                                color: const Color(0xFFD6E6F2),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                  Text(
+                    AppConfig.appName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                      color: Colors.white,
+                      height: 1.15,
+                    ),
                   ),
                   const SizedBox(height: 1),
                   Text(
@@ -616,6 +587,9 @@ class _AvatarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatar = user?.avatarUrl;
+    // The avatar carries the role colour, so the signed-in role is readable
+    // from the chrome alone.
+    final roleColor = RoleWorkspaceBanner.colorFor(user?.role ?? AppRole.worker);
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
@@ -625,7 +599,10 @@ class _AvatarButton extends StatelessWidget {
         width: 34,
         height: 34,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.12),
+          color: Color.alphaBlend(
+            roleColor.withValues(alpha: 0.45),
+            Colors.white.withValues(alpha: 0.10),
+          ),
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
         ),

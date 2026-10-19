@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import 'chamfer.dart';
 
 /// Section title with an optional trailing action and a soft leading rule.
 class SectionHeader extends StatelessWidget {
@@ -119,18 +120,20 @@ class EmptyState extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(vertical: compact ? 22 : 34, horizontal: AppTheme.lg),
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
         color: AppTheme.surface,
-        borderRadius: AppTheme.brLg,
-        border: Border.all(color: AppTheme.hairline),
+        shape: ChamferBorder(color: AppTheme.hairline, radius: 16, cut: 10),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: compact ? 40 : 52,
-            height: compact ? 40 : 52,
-            decoration: const BoxDecoration(color: AppTheme.surfaceMuted, shape: BoxShape.circle),
+            width: compact ? 40 : 48,
+            height: compact ? 40 : 48,
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceMuted,
+              borderRadius: AppTheme.brSm,
+            ),
             child: Icon(icon, size: compact ? 20 : 24, color: AppTheme.inkFaint),
           ),
           SizedBox(height: compact ? 10 : 14),

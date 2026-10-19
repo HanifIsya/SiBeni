@@ -270,7 +270,7 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
                 Expanded(
                   child: SbButton(
                     label: 'Darurat',
-                    icon: Icons.sos_rounded,
+                    icon: Icons.crisis_alert_rounded,
                     variant: SbButtonVariant.danger,
                     onPressed: widget.onNavigateToEmergency,
                   ),
@@ -1202,7 +1202,7 @@ class _ZoneSheet extends StatelessWidget {
             const SizedBox(height: 22),
             SbButton(
               label: 'Aktifkan Tanggap Darurat',
-              icon: Icons.sos_rounded,
+              icon: Icons.crisis_alert_rounded,
               variant: SbButtonVariant.danger,
               onPressed: () {
                 Navigator.pop(context);

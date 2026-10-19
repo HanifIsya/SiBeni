@@ -20,6 +20,27 @@ class ApiResult {
   bool get isSuccess => error == null;
 }
 
+/// Result of a read, including *why* it may be empty.
+///
+/// A silent empty list is indistinguishable from "there is nothing to show".
+/// That ambiguity is what made a failed request look like an empty screen, so
+/// every read now reports whether it came from the server, from the offline
+/// cache, or not at all.
+class ApiRead {
+  const ApiRead({this.data, this.fromCache = false, this.error});
+
+  final Map<String, dynamic>? data;
+
+  /// True when the payload was served from the on-device cache.
+  final bool fromCache;
+
+  /// Human-readable reason when the server could not be reached.
+  final String? error;
+
+  bool get hasData => data != null;
+  bool get failed => error != null;
+}
+
 /// ---------------------------------------------------------------------------
 /// ApiService
 ///
@@ -74,41 +95,52 @@ class ApiService {
 
   // ------------------------------------------------------------------ reads
   Future<List<Map<String, dynamic>>> getEarlyWarnings({bool includeInactive = false}) async {
-    final data = await _getJson(
+    final read = await _getJson(
       AppConfig.api(includeInactive ? '/api/bmkg?all=1' : '/api/bmkg'),
       cacheKey: _kWarnings,
       timeout: AppConfig.shortTimeout,
     );
-    final warnings = data?['warnings'];
+    final warnings = read.data?['warnings'];
     if (warnings is List) return _mapList(warnings);
     return _readCacheList(_kWarnings);
   }
 
   Future<List<Map<String, dynamic>>> getMiningZones() async {
-    final data = await _getJson(
+    final read = await _getJson(
       AppConfig.api('/api/zones'),
       cacheKey: _kZones,
       timeout: AppConfig.shortTimeout,
     );
-    final zones = data?['zones'];
+    final zones = read.data?['zones'];
     if (zones is List) return _mapList(zones);
     return _readCacheList(_kZones);
   }
 
   Future<Map<String, dynamic>?> getKpis() async {
-    return _getJson(
+    final read = await _getJson(
       AppConfig.api('/api/kpi'),
       cacheKey: _kKpis,
       timeout: AppConfig.shortTimeout,
     );
+    return read.data;
+  }
+
+  /// Inspection register plus corrective-action tickets.
+  ///
+  /// The status-aware variant exists because an empty inspection screen is
+  /// ambiguous: it can mean "no findings" or "the request never reached the
+  /// server". The screen needs to tell those apart.
+  Future<ApiRead> getInspectionsRead() async {
+    return _getJson(
+      AppConfig.api('/api/inspections'),
+      cacheKey: _kInspections,
+      timeout: AppConfig.longTimeout,
+    );
   }
 
   Future<Map<String, dynamic>> getInspections() async {
-    return await _getJson(
-          AppConfig.api('/api/inspections'),
-          cacheKey: _kInspections,
-          timeout: AppConfig.longTimeout,
-        ) ??
+    final read = await getInspectionsRead();
+    return read.data ??
         const {'corrective_actions': <dynamic>[], 'inspections': <dynamic>[]};
   }
 
@@ -154,19 +186,24 @@ class ApiService {
   }
 
   /// The hazard report register, scoped by RLS to what this role may see.
-  Future<({List<Map<String, dynamic>> reports, Map<String, dynamic> counts})>
-      getReports({String? status, String? zone}) async {
+  Future<ApiRead> getReportsRead({String? status, String? zone}) async {
     final query = <String>[
       if (status != null) 'status=$status',
       if (zone != null) 'zone=${Uri.encodeQueryComponent(zone)}',
     ].join('&');
 
-    final data = await _getJson(
+    return _getJson(
       AppConfig.api('/api/reports${query.isEmpty ? '' : '?$query'}'),
       cacheKey: _kReports,
       timeout: AppConfig.longTimeout,
     );
+  }
 
+  Future<({List<Map<String, dynamic>> reports, Map<String, dynamic> counts})>
+      getReports({String? status, String? zone}) async {
+    final read = await getReportsRead(status: status, zone: zone);
+
+    final data = read.data;
     if (data == null) {
       return (reports: await _readCacheList(_kReports), counts: const <String, dynamic>{});
     }
@@ -182,11 +219,12 @@ class ApiService {
   /// Personal notification inbox plus the unread badge count.
   Future<({List<Map<String, dynamic>> notifications, int unreadCount})>
       getNotifications({int limit = 60}) async {
-    final data = await _getJson(
+    final read = await _getJson(
       AppConfig.api('/api/notifications?limit=$limit'),
       cacheKey: _kNotifications,
       timeout: AppConfig.shortTimeout,
     );
+    final data = read.data;
     if (data == null) {
       return (notifications: <Map<String, dynamic>>[], unreadCount: 0);
     }
@@ -228,14 +266,19 @@ class ApiService {
   }
 
   /// Coordination channel between Supervisor, HSE and Management.
-  Future<({List<Map<String, dynamic>> requests, Map<String, dynamic> counts})>
-      getCoordination({String? status}) async {
+  Future<ApiRead> getCoordinationRead({String? status}) async {
     final query = status == null ? '' : '?status=$status';
-    final data = await _getJson(
+    return _getJson(
       AppConfig.api('/api/coordination$query'),
       cacheKey: _kCoordination,
       timeout: AppConfig.longTimeout,
     );
+  }
+
+  Future<({List<Map<String, dynamic>> requests, Map<String, dynamic> counts})>
+      getCoordination({String? status}) async {
+    final read = await getCoordinationRead(status: status);
+    final data = read.data;
     if (data == null) {
       return (
         requests: await _readCacheList(_kCoordination),
@@ -613,33 +656,94 @@ class ApiService {
 
   Future<void> _invalidate(String cacheKey) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(cacheKey);
+    await prefs.remove(_scoped(cacheKey));
   }
 
-  Future<Map<String, dynamic>?> _getJson(
+  /// Cache keys are namespaced per account.
+  ///
+  /// The offline cache used to be shared by every role, so a worker who
+  /// opened the app after an HSE session could read HSE's cached register.
+  /// Scoping the key by user id keeps one role's data out of another role's
+  /// pocket, and stops a stale payload from being served to the wrong person.
+  String _scoped(String cacheKey) {
+    String? uid;
+    try {
+      uid = AuthService.instance.userId;
+    } catch (_) {
+      uid = null;
+    }
+    return uid == null ? '$cacheKey::guest' : '$cacheKey::$uid';
+  }
+
+  /// Fetch a JSON payload, with an honest outcome.
+  ///
+  /// Behaviour:
+  ///  - one automatic retry, because the Render free tier can cold-start for
+  ///    longer than a single request window;
+  ///  - the cache is only used as a fallback, never as a silent substitute for
+  ///    a failed request;
+  ///  - the caller learns *why* there is no data.
+  Future<ApiRead> _getJson(
     String url, {
     required String cacheKey,
     required Duration timeout,
   }) async {
-    // Short-circuit only when there is genuinely no usable transport. A
-    // transport that has not been probed yet still deserves an attempt.
-    if (!_transportAvailable) return _readCache(cacheKey);
-    try {
-      final res = await http
-          .get(Uri.parse(url), headers: _headers)
-          .timeout(timeout);
-      if (res.statusCode == 200) {
-        final decoded = _decode(res);
-        if (decoded != null) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(cacheKey, jsonEncode(decoded));
-          return decoded;
-        }
-      }
-    } catch (e) {
-      debugPrint('GET $url failed, serving cache: $e');
+    final key = _scoped(cacheKey);
+
+    if (!_transportAvailable) {
+      final cached = await _readCache(key);
+      return ApiRead(
+        data: cached,
+        fromCache: cached != null,
+        error: cached == null
+            ? 'Tidak ada koneksi ke server. Data belum pernah tersimpan di perangkat ini.'
+            : null,
+      );
     }
-    return _readCache(cacheKey);
+
+    String? lastError;
+    var retryable = false;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final res = await http
+            .get(Uri.parse(url), headers: _headers)
+            .timeout(timeout);
+        if (res.statusCode == 200) {
+          final decoded = _decode(res);
+          if (decoded != null) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(key, jsonEncode(decoded));
+            return ApiRead(data: decoded);
+          }
+          lastError = 'Respons server tidak dapat dibaca.';
+          retryable = true;
+        } else if (res.statusCode == 401) {
+          lastError = 'Sesi Anda berakhir. Silakan masuk kembali.';
+          retryable = false;
+        } else if (res.statusCode >= 500) {
+          lastError = 'Server sedang bermasalah (${res.statusCode}).';
+          retryable = true;
+        } else {
+          // A client error will not fix itself.
+          lastError = 'Permintaan ditolak server (${res.statusCode}).';
+          retryable = false;
+        }
+      } catch (e) {
+        lastError = _messageForTransport(e);
+        retryable = true;
+      }
+      if (!retryable || attempt == 1) break;
+      // A cold start or a flaky site link is usually a one-off; give the
+      // server a second chance before telling the user it failed.
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+    }
+
+    final cached = await _readCache(key);
+    return ApiRead(
+      data: cached,
+      fromCache: cached != null,
+      error: lastError,
+    );
   }
 
   Future<Map<String, dynamic>?> _readCache(String key) async {
@@ -656,7 +760,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> _readCacheList(String key) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(key);
+      final raw = prefs.getString(_scoped(key));
       if (raw == null) return [];
       return _mapList(jsonDecode(raw));
     } catch (_) {

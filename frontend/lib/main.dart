@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:flutter/foundation.dart' show kReleaseMode;
+
 import 'core/app_config.dart';
 import 'core/auth_service.dart';
 import 'core/brand.dart';
@@ -27,9 +29,18 @@ import 'features/warning_manage_screen.dart';
 import 'features/settings_sheet.dart';
 import 'widgets/network_pill.dart';
 import 'widgets/role_workspace.dart';
+import 'widgets/states.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // A rendering error must never look like an empty page. In release the
+  // default error widget paints nothing, so the user would simply see a blank
+  // screen with no explanation. Debug builds keep Flutter's red error box.
+  if (kReleaseMode) {
+    ErrorWidget.builder = (details) => SbErrorFallback(error: details.exception);
+  }
+
   await AuthService.instance.initialize();
   await NetworkService.instance.initialize();
   OfflineSyncManager.instance.initialize();

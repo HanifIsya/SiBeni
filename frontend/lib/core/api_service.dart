@@ -71,6 +71,15 @@ class ApiService {
   static const String _kNotifications = 'cache_notifications';
   static const String _kCoordination = 'cache_coordination';
 
+  /// Test seam.
+  ///
+  /// When set, reads are served by this callback instead of the network. The
+  /// widget tests use it to render screens with **real production payloads**,
+  /// which is how a stage-6 ticket — the payload that used to blank the HSE
+  /// inspection screen — is now covered by an automated test.
+  @visibleForTesting
+  static Map<String, dynamic>? Function(String url)? readOverride;
+
   // ---------------------------------------------------------------- headers
   /// Authorization for the current session. The API needs this to evaluate the
   /// role matrix server-side.
@@ -690,6 +699,17 @@ class ApiService {
     required Duration timeout,
   }) async {
     final key = _scoped(cacheKey);
+
+    final override = readOverride;
+    if (override != null) {
+      final data = override(url);
+      if (data == null) {
+        return const ApiRead(error: 'Tidak ada data untuk pengujian.');
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, jsonEncode(data));
+      return ApiRead(data: data);
+    }
 
     if (_mobileDataBlocked) {
       final cached = await _readCache(key);

@@ -350,7 +350,66 @@ Rantai dampaknya:
 
 ---
 
-## 11. Catatan Rilis
+## 11. Putaran Keempat: Layar HSE Kosong-total (v1.5.2)
+
+Screenshot dari klien (`docs/screenshots/`) menunjukkan dua hal yang membedakannya
+dengan jelas:
+
+- **HSE**: seluruh area layar **kosong total** — bahkan strip peran dan judul
+  bagian tidak pernah muncul. Ini bukan "data kosong", melainkan **crash saat
+  render**.
+- **Supervisor**: layar tampil utuh (strip peran, ringkasan, kartu tiket).
+
+### 11.1 Akar masalah
+
+`frontend/lib/features/inspection_screen.dart` membangun label tombol aksi
+tiket:
+
+```dart
+// SEBELUM
+if (role == AppRole.hse) {
+  return stage == 2 ? 'Verifikasi Temuan' : 'Verifikasi → ${_stages[stage]}';
+}
+```
+
+`_stages` berisi 6 nama (indeks 0–5) sementara `stage_number` bersifat
+1-based dan bisa bernilai **6** (tiket yang sudah selesai). Membaca
+`_stages[6]` melempar **RangeError** saat build.
+
+Mengapa hanya HSE?
+
+--label tersebut hanya dipakai untuk peran HSE; Supervisor memakai label lain
+  yang tidak mengindeks daftar.
+- Kedua tiket di database memang berada pada tahap 6, jadi crash terjadi
+  **selalu** untuk akun HSE.
+- Di mode rilis, `ErrorWidget` tidak menggambar apa pun → area layar tampak
+  kosong tanpa pesan apa pun.
+
+### 11.2 Perbaikan
+
+- `_stageName(stage)` dengan penjepitan indeks: nama tahap selalu aman dibaca.
+- Indeks `stages[stage - 1]` pada label status juga dijepit.
+- **Jaring pengaman rilis**: `ErrorWidget.builder` di override pada build rilis
+  (`SbErrorFallback`), sehingga layar yang gagal render menampilkan pesan
+  jelas — "Layar ini gagal ditampilkan" — alih-alih area kosong.
+
+### 11.3 Uji regresi
+
+`frontend/test/inspection_regression_test.dart` merender layar Inspeksi dengan
+**payload produksi nyata** (2 tiket tahap 6) melalui seam
+`ApiService.readOverride`:
+
+1. Layar Inspeksi HSE menampilkan tiket (tidak crash).
+2. Layar Inspeksi Supervisor dengan payload yang sama tetap benar.
+3. Seluruh tab HSE (Peta, Inspeksi, Laporan, Koordinasi, Dashboard) dirender
+   tanpa error.
+
+Uji ini **terbukti gagal** ketika bug dikembalikan secara sengaja, sehingga
+ regresi ini tidak akan terulang diam-diam.
+
+---
+
+## 12. Catatan Rilis
 
 1. Jalankan migrasi `006` dan `007` (sudah diterapkan pada proyek
    `qgdnrsnbxwqrouigrskb`).

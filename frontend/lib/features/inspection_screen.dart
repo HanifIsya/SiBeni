@@ -113,10 +113,21 @@ class _InspectionScreenState extends State<InspectionScreen>
     return false;
   }
 
+  /// Name of a stage, always inside the list.
+  ///
+  /// The stage number is 1-based while the list is 0-based, and a ticket can
+  /// already sit at stage 6 ("Selesai"). Reading `_stages[stage]` unguarded
+  /// threw a RangeError for every HSE account, which blanked the whole
+  /// inspection screen.
+  static String _stageName(int stage) {
+    final index = (stage - 1).clamp(0, _stages.length - 1);
+    return _stages[index];
+  }
+
   static String _advanceLabel(Map<String, dynamic> ticket, AppRole role) {
     final stage = _stage(ticket);
     if (role == AppRole.hse) {
-      return stage == 2 ? 'Verifikasi Temuan' : 'Verifikasi → ${_stages[stage]}';
+      return stage == 2 ? 'Verifikasi Temuan' : 'Verifikasi → ${_stageName(stage)}';
     }
     if (stage == 4) return 'Mulai Perbaikan';
     if (stage == 5) return 'Tandai Selesai';
@@ -814,7 +825,8 @@ class _TicketCard extends StatelessWidget {
                                 ? (managementStatus == 'APPROVED'
                                     ? 'MENUNGGU EVALUASI'
                                     : 'SELESAI')
-                                : stages[stage - 1].toUpperCase(),
+                                : stages[(stage - 1).clamp(0, stages.length - 1)]
+                                    .toUpperCase(),
                 icon: evaluated
                     ? Icons.verified_rounded
                     : rejected

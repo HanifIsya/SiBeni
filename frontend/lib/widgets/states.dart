@@ -161,6 +161,57 @@ class EmptyState extends StatelessWidget {
   }
 }
 
+/// Shown in release builds when a screen fails to render.
+///
+/// Without this, a rendering error paints an invisible box and the user is
+/// left staring at a blank page with no way to tell what happened. In debug
+/// builds Flutter keeps its own red error box, so this is only used in
+/// release.
+class SbErrorFallback extends StatelessWidget {
+  const SbErrorFallback({super.key, this.error});
+
+  final Object? error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.lg, vertical: 36),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 38,
+            color: AppTheme.riskCritical,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Layar ini gagal ditampilkan',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Tarik layar untuk memuat ulang, atau tutup lalu buka kembali '
+            'aplikasinya. Data Anda tidak hilang.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.45,
+              color: AppTheme.inkMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Lightweight shimmering placeholder used while the first payload loads.
 class SkeletonBox extends StatefulWidget {
   const SkeletonBox({

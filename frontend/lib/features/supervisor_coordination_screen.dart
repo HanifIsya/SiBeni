@@ -5,6 +5,7 @@ import '../core/api_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/network_aware.dart';
 import '../widgets/pills.dart';
 import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
@@ -26,7 +27,8 @@ class SupervisorCoordinationScreen extends StatefulWidget {
 }
 
 class _SupervisorCoordinationScreenState
-    extends State<SupervisorCoordinationScreen> {
+    extends State<SupervisorCoordinationScreen>
+    with NetworkAwareState {
   List<Map<String, dynamic>> _requests = [];
   Map<String, dynamic> _counts = const {};
   bool _loading = true;
@@ -68,6 +70,11 @@ class _SupervisorCoordinationScreenState
       _loadError = read.error;
       _loading = false;
     });
+  }
+
+  @override
+  void onNetworkRestored() {
+    if (_loadError != null) _load();
   }
 
   List<Map<String, dynamic>> get _visible {

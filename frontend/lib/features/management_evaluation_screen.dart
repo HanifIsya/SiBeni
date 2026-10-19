@@ -5,6 +5,7 @@ import '../core/api_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/network_aware.dart';
 import '../widgets/pills.dart';
 import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
@@ -26,12 +27,16 @@ class ManagementEvaluationScreen extends StatefulWidget {
       _ManagementEvaluationScreenState();
 }
 
-class _ManagementEvaluationScreenState extends State<ManagementEvaluationScreen> {
+class _ManagementEvaluationScreenState extends State<ManagementEvaluationScreen>
+    with NetworkAwareState {
   List<Map<String, dynamic>> _actions = [];
   Map<String, dynamic> _counts = const {};
   bool _loading = true;
   String _filter = 'pending';
   String? _busyId;
+
+  /// Set when the register could not be loaded.
+  String? _loadError;
 
   @override
   void initState() {
@@ -40,20 +45,35 @@ class _ManagementEvaluationScreenState extends State<ManagementEvaluationScreen>
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    final data = await ApiService.instance.getInspections();
-    if (!mounted) return;
-    final raw = data['corrective_actions'];
     setState(() {
-      _actions = raw is List
-          ? raw.whereType<Map<String, dynamic>>().toList()
-          : <Map<String, dynamic>>[];
-      final counts = data['counts'];
-      _counts = counts is Map
-          ? counts.map((k, v) => MapEntry(k.toString(), v))
-          : const {};
+      _loading = true;
+      _loadError = null;
+    });
+    final read = await ApiService.instance.getInspectionsRead();
+    if (!mounted) return;
+    final data = read.data;
+    setState(() {
+      if (data == null) {
+        _actions = const [];
+        _counts = const {};
+      } else {
+        final raw = data['corrective_actions'];
+        _actions = raw is List
+            ? raw.whereType<Map<String, dynamic>>().toList()
+            : <Map<String, dynamic>>[];
+        final counts = data['counts'];
+        _counts = counts is Map
+            ? counts.map((k, v) => MapEntry(k.toString(), v))
+            : const {};
+      }
+      _loadError = read.error;
       _loading = false;
     });
+  }
+
+  @override
+  void onNetworkRestored() {
+    if (_loadError != null) _load();
   }
 
   static String _managementStatus(Map<String, dynamic> action) =>
@@ -170,6 +190,20 @@ class _ManagementEvaluationScreenState extends State<ManagementEvaluationScreen>
         const SizedBox(height: AppTheme.lg),
         if (_loading)
           const _EvaluationSkeleton()
+        else if (_loadError != null && _actions.isEmpty)
+          EmptyState(
+            icon: Icons.cloud_off_rounded,
+            title: 'Antrean evaluasi belum tersinkron',
+            message: '$_loadError',
+            compact: true,
+            action: SbButton(
+              label: 'Coba Lagi',
+              icon: Icons.refresh_rounded,
+              height: 44,
+              expand: false,
+              onPressed: _load,
+            ),
+          )
         else if (_visible.isEmpty)
           EmptyState(
             icon: Icons.task_alt_rounded,

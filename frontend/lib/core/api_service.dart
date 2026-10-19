@@ -83,14 +83,15 @@ class ApiService {
     };
   }
 
-  /// True when a transport exists and the user has not blocked cellular data.
-  bool get _transportAvailable {
+  /// True when the user has explicitly blocked mobile data.
+  ///
+  /// This is the only transport state the app may act on without asking the
+  /// server. A platform "no network" guess is not enough: Android can report
+  /// an empty connectivity list on a perfectly healthy link, and trusting that
+  /// guess used to keep the app from ever calling the API.
+  bool get _mobileDataBlocked {
     final link = NetworkService.instance.link.value;
-    if (link == LinkType.none) return false;
-    if (link == LinkType.cellular && !NetworkService.instance.allowMobileData.value) {
-      return false;
-    }
-    return true;
+    return link == LinkType.cellular && !NetworkService.instance.allowMobileData.value;
   }
 
   // ------------------------------------------------------------------ reads
@@ -584,7 +585,7 @@ class ApiService {
 
   /// Submits a single queued report. Returns `true` when accepted (2xx).
   Future<bool> queueReport(Map<String, dynamic> report) async {
-    if (!_transportAvailable) return false;
+    if (_mobileDataBlocked) return false;
     try {
       final res = await http
           .post(
@@ -690,13 +691,13 @@ class ApiService {
   }) async {
     final key = _scoped(cacheKey);
 
-    if (!_transportAvailable) {
+    if (_mobileDataBlocked) {
       final cached = await _readCache(key);
       return ApiRead(
         data: cached,
         fromCache: cached != null,
         error: cached == null
-            ? 'Tidak ada koneksi ke server. Data belum pernah tersimpan di perangkat ini.'
+            ? 'Data seluler sedang diblokir. Aktifkan data seluler di menu Pengaturan.'
             : null,
       );
     }

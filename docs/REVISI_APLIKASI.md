@@ -292,7 +292,65 @@ perilaku di atas.
 
 ---
 
-## 10. Catatan Rilis
+## 10. Putaran Ketiga: Menu "Inspeksi" HSE Masih Kosong (v1.5.1)
+
+Pada rilis v1.5.0 gejala masih muncul: **tab Inspeksi kosong untuk HSE, tetapi
+berisi untuk Supervisor**. Setelah data produksi dibandingkan langsung
+(`GET /api/inspections` dengan token HSE dan token Supervisor), keduanya
+menerima payload yang **identik**: 2 tindakan korektif + 1 riwayat inspeksi.
+Jadi masalahnya bukan di server, melainkan di cara aplikasi menentukan
+"terhubung atau tidak".
+
+### 10.1 Akar masalah
+
+Aplikasi lebih dulu membaca `connectivity_plus` dan menganggap perangkat
+**offline** bila platform melaporkan daftar koneksi kosong. Android memang
+sering menjawab dengan daftar kosong pada kondisi tertentu, dan plugin-nya
+juga dapat gagal total (`MissingPluginException`).
+
+Rantai dampaknya:
+
+1. `link == none` → `NetworkService.probeBackend()` langsung `return false`
+   tanpa pernah mencoba request → status tetap "Offline".
+2. `ApiService._transportAvailable` bernilai false → **seluruh pembacaan API
+   dilewati**; tidak ada satu pun request yang keluar dari perangkat.
+3. Layar pun tidak pernah meminta data; yang tampil hanyalah cache lama.
+4. Cache lama bersifat global pada rilis lama, sehingga **akun Supervisor masih
+   menampilkan sisa cache** dan terlihat "berfungsi", sedangkan akun HSE (cache
+   sendiri, kosong setelah perubahan v1.5.0) menampilkan layar kosong.
+5. `OfflineSyncManager` juga terkunci pada `isOnline`, sehingga laporan offline
+   tidak pernah terkirim.
+
+### 10.2 Perbaikan
+
+- **Round-trip HTTP adalah kebenaran.** `probeBackend()` selalu mencoba
+  `/api/health`, apa pun tebakan platform. Status online/terputus ditentukan
+  dari hasil request, bukan dari daftar koneksi.
+- **Plugin konektivitas dibuat tahan gagal.** Kegagalan `checkConnectivity()`
+  (izin hilang, ROM aneh, build tanpa plugin) tidak lagi menjatuhkan
+  inisialisasi; aplikasi langsung beralih ke probe HTTP.
+- **Deteksi transport tidak lagi memblokir pembacaan.** `ApiService` hanya
+  menolak request bila pengguna **sengaja** memblokir data seluler; keadaan
+  "tidak ada transport" tidak lagi dipakai sebagai alasan untuk tidak mencoba.
+- **Pemulihan otomatis saat koneksi kembali.** Layar Inspeksi, Register
+  Laporan, Kanal Koordinasi, Konsol Evaluasi, Dashboard, dan Peta memuat ulang
+  datanya sendiri begitu status koneksi berubah menjadi online
+  (`NetworkAwareState`), tanpa perlu menarik layar.
+- Antrean laporan offline ikut terperbaiki: `OfflineSyncManager` memakai status
+  berbasis probe, bukan tebakan platform.
+
+### 10.3 Verifikasi
+
+- Uji regresi baru: "the app never declares itself offline just because the
+  platform reports no transport" (`frontend/test/ux_regression_test.dart`).
+- 83 uji Flutter lulus, `flutter analyze` bersih.
+- Bukti server: payload `GET /api/inspections` identik untuk HSE dan Supervisor
+  (2 tindakan + 1 inspeksi) — masalahnya murni di sisi klien dan sudah
+  ditutup di sisi klien.
+
+---
+
+## 11. Catatan Rilis
 
 1. Jalankan migrasi `006` dan `007` (sudah diterapkan pada proyek
    `qgdnrsnbxwqrouigrskb`).

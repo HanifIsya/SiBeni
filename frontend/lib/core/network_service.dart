@@ -67,10 +67,22 @@ class NetworkService {
     final prefs = await SharedPreferences.getInstance();
     allowMobileData.value = prefs.getBool(_allowMobileKey) ?? true;
 
-    _sub = Connectivity().onConnectivityChanged.listen(_onConnectivityChanged);
-
-    final results = await Connectivity().checkConnectivity();
-    _onConnectivityChanged(results, probe: true);
+    try {
+      _sub = Connectivity().onConnectivityChanged.listen(
+            _onConnectivityChanged,
+            // A platform error must never take the app down; the HTTP probe
+            // is the authoritative check.
+            onError: (Object _) => _probeNow(),
+          );
+      final results = await Connectivity().checkConnectivity();
+      _onConnectivityChanged(results, probe: true);
+    } catch (_) {
+      // The connectivity plugin is not always available (missing permission,
+      // unusual ROM, or a stripped build). Losing the transport hint is fine:
+      // the round-trip to the server is the only thing that really matters.
+      link.value = LinkType.none;
+      _probeNow();
+    }
   }
 
   Future<void> setAllowMobileData(bool value) async {
@@ -82,27 +94,43 @@ class NetworkService {
 
   /// Re-evaluate connectivity. Cheap calls are throttled to one probe / 20s.
   Future<void> refresh({bool force = false}) async {
-    final results = await Connectivity().checkConnectivity();
+    List<ConnectivityResult> results;
+    try {
+      results = await Connectivity().checkConnectivity();
+    } catch (_) {
+      results = const [];
+    }
     _onConnectivityChanged(results, force: force);
+  }
+
+  /// Run a reachability probe right now, regardless of the transport hint.
+  void _probeNow() {
+    if (link.value == LinkType.cellular && !allowMobileData.value) {
+      state.value = OnlineState.mobileBlocked;
+      return;
+    }
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 120), () async {
+      _lastProbe = DateTime.now();
+      final ok = await probeBackend();
+      state.value = ok
+          ? OnlineState.online
+          : (link.value == LinkType.none
+              ? OnlineState.offline
+              : OnlineState.unreachable);
+    });
   }
 
   void _onConnectivityChanged(List<ConnectivityResult> results, {bool probe = false, bool force = false}) {
     link.value = _resolveLink(results);
 
-    final transportUsable = link.value == LinkType.wifi ||
-        link.value == LinkType.ethernet ||
-        (link.value == LinkType.cellular && allowMobileData.value);
-
-    if (!transportUsable) {
-      state.value = link.value == LinkType.none
-          ? OnlineState.offline
-          : (link.value == LinkType.cellular && !allowMobileData.value
-              ? OnlineState.mobileBlocked
-              : OnlineState.offline);
+    // A blocked cellular link is the one transport decision the user made
+    // explicitly, so it is honoured without asking the server.
+    if (link.value == LinkType.cellular && !allowMobileData.value) {
+      state.value = OnlineState.mobileBlocked;
       return;
     }
 
-    // Transport present: confirm the server is actually reachable.
     final now = DateTime.now();
     if (!force && !probe && now.difference(_lastProbe) < const Duration(seconds: 20)) {
       return;
@@ -112,17 +140,25 @@ class NetworkService {
     _debounce = Timer(const Duration(milliseconds: 450), () async {
       _lastProbe = now;
       final ok = await probeBackend();
-      state.value = ok ? OnlineState.online : OnlineState.unreachable;
+      // The HTTP round-trip is the truth. Android does not always report a
+      // transport type (it can answer with an empty list), and believing that
+      // guess used to keep the app from talking to the server at all.
+      state.value = ok
+          ? OnlineState.online
+          : (link.value == LinkType.none
+              ? OnlineState.offline
+              : OnlineState.unreachable);
     });
   }
-
   /// Lightweight reachability check against the health endpoint.
   ///
   /// Having a transport is not the same as having a working uplink — captive
   /// portals and dead site backhaul are common underground. This performs a
   /// real HTTP round-trip so the UI never claims to be online when it is not.
-  Future<bool> probeBackend({Duration timeout = const Duration(seconds: 6)}) async {
-    if (link.value == LinkType.none) return false;
+  ///
+  /// The request is attempted even when the platform reports no transport at
+  /// all: the platform guess is unreliable, the round-trip is not.
+  Future<bool> probeBackend({Duration timeout = const Duration(seconds: 8)}) async {
     if (link.value == LinkType.cellular && !allowMobileData.value) return false;
 
     try {

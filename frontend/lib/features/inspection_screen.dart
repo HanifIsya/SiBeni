@@ -6,6 +6,7 @@ import '../core/api_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/network_aware.dart';
 import '../widgets/pills.dart';
 import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
@@ -24,7 +25,8 @@ class InspectionScreen extends StatefulWidget {
   State<InspectionScreen> createState() => _InspectionScreenState();
 }
 
-class _InspectionScreenState extends State<InspectionScreen> {
+class _InspectionScreenState extends State<InspectionScreen>
+    with NetworkAwareState {
   static const _stages = ['Inspeksi', 'Temuan', 'Verifikasi', 'Tugaskan', 'Perbaikan', 'Selesai'];
 
   List<Map<String, dynamic>> _actions = [];
@@ -70,6 +72,13 @@ class _InspectionScreenState extends State<InspectionScreen> {
   static List<Map<String, dynamic>> _listOf(dynamic raw) {
     if (raw is! List) return [];
     return raw.whereType<Map<String, dynamic>>().toList();
+  }
+
+  /// The link came back: pull the register again instead of leaving the user
+  /// on a failed screen.
+  @override
+  void onNetworkRestored() {
+    if (_loadError != null) _load();
   }
 
   List<Map<String, dynamic>> get _visible {

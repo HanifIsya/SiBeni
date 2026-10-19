@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:sibeni/core/network_service.dart';
 import 'package:sibeni/core/user_session.dart';
 import 'package:sibeni/features/emergency_screen.dart';
 import 'package:sibeni/features/inspection_screen.dart';
@@ -143,4 +144,19 @@ void main() {
       findsWidgets,
     );
   });
+
+  test(
+    'the app never declares itself offline just because the platform reports '
+    'no transport',
+    () async {
+      // Android can answer a connectivity check with an empty list. Believing
+      // that guess kept the app from calling the API at all, which is what
+      // left the HSE inspection register empty on a healthy device.
+      NetworkService.instance.link.value = LinkType.none;
+      await NetworkService.instance.refresh(force: true);
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+
+      expect(NetworkService.instance.state.value, OnlineState.online);
+    },
+  );
 }

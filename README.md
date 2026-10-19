@@ -120,6 +120,7 @@
     - Satu wordmark "SOS" pada tombol darurat (tidak lagi dua tulisan), dan ikon sirene di peta, tab, serta menu overflow.
     - Tombol "Keluar Akun" hanya ada di tab **Profil** — tidak lagi di sheet pengaturan atau sheet profil.
     - Layar yang gagal memuat data menampilkan status sinkronisasi + tombol **Coba Lagi**, bukan layar kosong yang menyesatkan.
+    - Status koneksi ditentukan dari **round-trip HTTP ke server**, bukan dari tebakan jenis jaringan perangkat: perangkat yang terhubung pasti menarik data, dan layar otomatis memuat ulang begitu koneksi kembali.
 
 ---
 
@@ -188,7 +189,7 @@ Target: **46/46 pemeriksaan lulus**, termasuk penolakan `403` untuk setiap tinda
 cd frontend
 flutter pub get
 flutter analyze                 # harus: No issues found!
-flutter test                    # 82 uji: tata letak + logika inti + matriks peran + regresi UX
+flutter test                    # 83 uji: tata letak + logika inti + matriks peran + regresi UX
 flutter build apk --release
 # → build/app/outputs/flutter-apk/app-release.apk
 ```

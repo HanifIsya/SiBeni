@@ -13,6 +13,7 @@ import '../core/user_session.dart';
 import '../core/zone_model.dart';
 import '../features/warning_manage_screen.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/network_aware.dart';
 import '../widgets/pills.dart';
 import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
@@ -38,7 +39,7 @@ class RiskMapScreen extends StatefulWidget {
   State<RiskMapScreen> createState() => _RiskMapScreenState();
 }
 
-class _RiskMapScreenState extends State<RiskMapScreen> {
+class _RiskMapScreenState extends State<RiskMapScreen> with NetworkAwareState {
   final MapController _map = MapController();
 
   List<Map<String, dynamic>> _warnings = [];
@@ -62,6 +63,11 @@ class _RiskMapScreenState extends State<RiskMapScreen> {
       _zones = zones;
       _loading = false;
     });
+  }
+
+  @override
+  void onNetworkRestored() {
+    if (_zones.isEmpty) _load();
   }
 
   // ----------------------------------------------------------------- derived

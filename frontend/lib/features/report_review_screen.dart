@@ -6,6 +6,7 @@ import '../core/api_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/network_aware.dart';
 import '../widgets/pills.dart';
 import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
@@ -27,7 +28,8 @@ class ReportReviewScreen extends StatefulWidget {
   State<ReportReviewScreen> createState() => _ReportReviewScreenState();
 }
 
-class _ReportReviewScreenState extends State<ReportReviewScreen> {
+class _ReportReviewScreenState extends State<ReportReviewScreen>
+    with NetworkAwareState {
   List<Map<String, dynamic>> _reports = [];
   Map<String, dynamic> _counts = const {};
   bool _loading = true;
@@ -69,6 +71,11 @@ class _ReportReviewScreenState extends State<ReportReviewScreen> {
       _loadError = read.error;
       _loading = false;
     });
+  }
+
+  @override
+  void onNetworkRestored() {
+    if (_loadError != null) _load();
   }
 
   Future<void> _openReview(Map<String, dynamic> report) async {

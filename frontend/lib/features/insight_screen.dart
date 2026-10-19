@@ -5,6 +5,7 @@ import '../core/api_service.dart';
 import '../core/theme.dart';
 import '../core/user_session.dart';
 import '../widgets/adaptive_page.dart';
+import '../widgets/network_aware.dart';
 import '../widgets/pills.dart';
 import '../widgets/role_workspace.dart';
 import '../widgets/sb_button.dart';
@@ -27,7 +28,7 @@ class InsightScreen extends StatefulWidget {
   State<InsightScreen> createState() => _InsightScreenState();
 }
 
-class _InsightScreenState extends State<InsightScreen> {
+class _InsightScreenState extends State<InsightScreen> with NetworkAwareState {
   Map<String, dynamic>? _payload;
   bool _loading = true;
 
@@ -47,6 +48,11 @@ class _InsightScreenState extends State<InsightScreen> {
       _payload = data;
       _loading = false;
     });
+  }
+
+  @override
+  void onNetworkRestored() {
+    if (_payload == null) _load();
   }
 
   Map<String, dynamic>? get _latest {
